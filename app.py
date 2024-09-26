@@ -46,21 +46,8 @@ class TimeSlot(db.Model):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
-
-@app.route('/api/timeslots', methods=['GET'])
-def get_timeslots():
-    timeslots = TimeSlot.query.all()
-    result = [{
-        'id': slot.id,
-        'start_time': slot.start_time.isoformat(),
-        'end_time': slot.end_time.isoformat(),
-        'is_available': slot.is_available,
-        'name': slot.name if not slot.is_available else None,
-        'location': slot.location,
-        'is_repeated': slot.is_repeated
-    } for slot in timeslots]
-    return jsonify(result)
+    supervision_start_date = os.getenv('SUPERVISION_START_DATE')
+    return render_template('index.html', supervision_start_date=supervision_start_date)
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
@@ -171,16 +158,16 @@ def admin_login():
 def admin():
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin_login'))
-    return render_template('admin.html')
+    supervision_start_date = os.getenv('SUPERVISION_START_DATE')
+    return render_template('admin.html', supervision_start_date=supervision_start_date)
 
 @app.route('/admin/logout')
 def admin_logout():
     session.pop('admin_logged_in', None)
     return redirect(url_for('index'))
 
-@app.route('/api/admin/get_timeslots', methods=['GET'])
-@admin_required
-def get_admin_timeslots():
+@app.route('/api/get_timeslots', methods=['GET'])
+def get_timeslots():
     timeslots = TimeSlot.query.order_by(TimeSlot.start_time).all()
     return jsonify([{
         'id': slot.id,
@@ -231,5 +218,5 @@ def init_db():
 
 if __name__ == '__main__':
     init_db()
-    port = int(os.environ.get('PORT', 5000))  # Changed default port to 5001
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port, debug=True)

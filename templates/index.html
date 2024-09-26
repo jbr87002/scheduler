@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Time Slot Signup</title>
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css' rel='stylesheet' />
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js'></script>
     <style>
@@ -28,23 +27,11 @@
             background-color: #ffafcc;
             border-color: #9d0208;
         }
-        .fc-timegrid-slot[data-time="20:00:00"] {
-            border-bottom: 2px solid #ff0000 !important;
-        }
-        .fc-timegrid-slot[data-time="20:00:00"] ~ div {
-            display: none !important;
-        }
-        .fc-timegrid-axis {
-            display: none;
-        }
         .fc .fc-timegrid-slot {
             height: 3em;
         }
         .fc .fc-timegrid-slot-label {
             vertical-align: top;
-        }
-        .repeated-slot {
-            background-color: #e6e6ff !important;
         }
         #signupModal {
             display: none;
@@ -75,17 +62,27 @@
             text-decoration: none;
             cursor: pointer;
         }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.4);
+        }
     </style>
 </head>
 <body>
-    <h1>Time Slot Signup</h1>
+    <h1 style="text-align: center;">Benji's supervision signups</h1>
     <div id="calendar"></div>
     <div id="signupModal">
         <div class="modal-content">
             <span class="close">&times;</span>
-            <h2>Sign Up for Time Slot</h2>
+            <h2>Sign up for supervision</h2>
             <form id="signupForm">
-                <label for="name">Your Name:</label>
+                <label for="name">Names:</label>
                 <input type="text" id="name" required><br><br>
                 <label>
                     <input type="radio" name="repeatOption" value="repeat" required> Repeat until end of term
@@ -97,12 +94,22 @@
             </form>
         </div>
     </div>
+    <div id="bookedSlotModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Booked Slot Information</h2>
+            <p id="bookedSlotInfo"></p>
+        </div>
+    </div>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             var calendarEl = document.getElementById('calendar');
             var allEvents = [];
+            var supervisionStartDate = new Date("{{ supervision_start_date }}");
+            var today = new Date();
+            today.setHours(0, 0, 0, 0);
 
-            fetch('/api/timeslots')
+            fetch('/api/get_timeslots')
                 .then(response => response.json())
                 .then(data => {
                     allEvents = data;
@@ -113,14 +120,17 @@
             function initializeCalendar() {
                 var calendar = new FullCalendar.Calendar(calendarEl, {
                     initialView: 'timeGridWeek',
+                    initialDate: supervisionStartDate,
                     headerToolbar: {
                         left: 'prev,next today',
                         center: 'title',
+                        right: 'dayGridMonth,timeGridWeek'
                     },
                     slotMinTime: '09:00:00',
                     slotMaxTime: '20:00:00',
                     height: 'auto',
                     allDaySlot: false,
+                    selectMirror: true,
                     events: allEvents.map(event => ({
                         id: event.id,
                         title: event.is_available ? event.location : `${event.name} (${event.location})`,
@@ -128,7 +138,9 @@
                         end: new Date(event.end_time),
                         extendedProps: {
                             is_available: event.is_available,
-                            isRepeated: event.is_repeated
+                            isRepeated: event.is_repeated,
+                            name: event.name,
+                            location: event.location
                         },
                         className: event.is_available ? 'available-slot' : 'booked-slot'
                     })),
@@ -136,9 +148,13 @@
                         if (info.event.extendedProps.is_available) {
                             signUp(info.event.id);
                         } else {
-                            let message = `This time slot is already taken by ${info.event.title}`;
-                            alert(message);
+                            showBookedSlotInfo(info.event);
                         }
+                    },
+                    validRange: function(nowDate) {
+                        return {
+                            start: today
+                        };
                     }
                 });
                 calendar.render();
@@ -182,6 +198,31 @@
                         }
                         modal.style.display = 'none';
                     });
+                }
+            }
+
+            function showBookedSlotInfo(event) {
+                const modal = document.getElementById('bookedSlotModal');
+                const closeBtn = modal.getElementsByClassName('close')[0];
+                const infoElement = document.getElementById('bookedSlotInfo');
+
+                infoElement.innerHTML = `
+                    <strong>Booked by:</strong> ${event.extendedProps.name}<br>
+                    <strong>Location:</strong> ${event.extendedProps.location}<br>
+                    <strong>Time:</strong> ${event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - ${event.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}<br>
+                    <strong>Date:</strong> ${event.start.toLocaleDateString()}
+                `;
+
+                modal.style.display = 'block';
+
+                closeBtn.onclick = function() {
+                    modal.style.display = 'none';
+                }
+
+                window.onclick = function(event) {
+                    if (event.target == modal) {
+                        modal.style.display = 'none';
+                    }
                 }
             }
         });

@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin - Manage Time Slots</title>
     <!-- FullCalendar styles and scripts -->
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css' rel='stylesheet' />
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js'></script>
@@ -29,29 +28,65 @@
             background-color: #ffafcc;
             border-color: #9d0208;
         }
-        /* Add these new styles */
-        .fc-timegrid-slot[data-time="20:00:00"] {
-            border-bottom: 2px solid #ff0000 !important;
-        };
-        .fc-timegrid-slot[data-time="20:30:00"],
-        .fc-timegrid-slot[data-time="20:30:00"] + div {
-            display: none !important;
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 300px;
+        }
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .close:hover,
+        .close:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
-    <h1>Admin - Manage Time Slots</h1>
+    <h1 style="text-align: center;">Admin - Manage Time Slots</h1>
     <div id="calendar"></div>
     <div id="message"></div>
+
+    <!-- Add this after the calendar div -->
+    <div id="bookedSlotModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Booked Slot Information</h2>
+            <p id="bookedSlotInfo"></p>
+            <button id="deleteBookedSlot">Delete Slot</button>
+            <button id="changeLocation">Change Location</button>
+        </div>
+    </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             let calendar;
+            var supervisionStartDate = new Date("{{ supervision_start_date }}");
+            var today = new Date();
+            today.setHours(0, 0, 0, 0);
 
             // Initialize FullCalendar
             var calendarEl = document.getElementById('calendar');
             calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: 'timeGridWeek',
+                initialDate: supervisionStartDate,
                 headerToolbar: {
                     left: 'prev,next today',
                     center: 'title',
@@ -59,12 +94,18 @@
                 },
                 slotDuration: '00:30:00',
                 slotMinTime: '09:00:00',
-                slotMaxTime: '20:30:00', // Set to 8:30 PM
-                height: 'auto', // This will make the calendar adjust its height based on content
+                slotMaxTime: '20:00:00',
+                allDaySlot: false,
+                height: 'auto',
                 selectable: true,
                 selectMirror: true,
                 editable: true,
                 eventOverlap: false,
+                validRange: function(nowDate) {
+                    return {
+                        start: today
+                    };
+                },
                 select: function(info) {
                     let location = prompt('Enter location for this time slot:');
                     if (location) {
@@ -85,13 +126,9 @@
                 },
                 eventClick: function(info) {
                     if (info.event.extendedProps.is_available) {
-                        // If the slot is available, delete it without confirmation
                         info.event.remove();
                     } else {
-                        // If the slot is booked, ask for confirmation before deleting
-                        if (confirm('This time slot is booked. Are you sure you want to delete it?')) {
-                            info.event.remove();
-                        }
+                        showBookedSlotInfo(info.event);
                     }
                 },
                 eventDrop: function(info) {
@@ -104,14 +141,14 @@
                 },
                 events: function(fetchInfo, successCallback, failureCallback) {
                     // Fetch events for the calendar
-                    fetch('/api/admin/get_timeslots')
+                    fetch('/api/get_timeslots')
                         .then(response => response.json())
                         .then(data => {
                             const events = data.map(slot => ({
                                 id: slot.id,
                                 title: slot.is_available ? 'Available: ' + slot.location : 'Booked: ' + slot.name,
-                                start: slot.start_time,
-                                end: slot.end_time,
+                                start: new Date(slot.start_time),
+                                end: new Date(slot.end_time),
                                 className: slot.is_available ? 'available-slot' : 'booked-slot',
                                 extendedProps: {
                                     location: slot.location,
@@ -175,12 +212,48 @@
             saveButton.onclick = saveTimeSlots;
             document.body.insertBefore(saveButton, document.getElementById('message'));
 
-            // Add event listener for calendar's dateClick event
-            calendar.on('dateClick', function(info) {
-                selectedDate = info.date;
-                datePicker.setDate(selectedDate);
-                initializeTimeline(selectedDate);
-            });
+            function showBookedSlotInfo(event) {
+                const modal = document.getElementById('bookedSlotModal');
+                const closeBtn = modal.getElementsByClassName('close')[0];
+                const infoElement = document.getElementById('bookedSlotInfo');
+                const deleteBtn = document.getElementById('deleteBookedSlot');
+                const changeLocationBtn = document.getElementById('changeLocation');
+
+                infoElement.innerHTML = `
+                    <strong>Booked by:</strong> ${event.extendedProps.name}<br>
+                    <strong>Location:</strong> ${event.extendedProps.location}<br>
+                    <strong>Time:</strong> ${event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - ${event.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}<br>
+                    <strong>Date:</strong> ${event.start.toLocaleDateString()}
+                `;
+
+                modal.style.display = 'block';
+
+                closeBtn.onclick = function() {
+                    modal.style.display = 'none';
+                }
+
+                deleteBtn.onclick = function() {
+                    if (confirm('Are you sure you want to delete this booked slot?')) {
+                        event.remove();
+                        modal.style.display = 'none';
+                    }
+                }
+
+                changeLocationBtn.onclick = function() {
+                    let newLocation = prompt('Enter new location:', event.extendedProps.location);
+                    if (newLocation) {
+                        event.setExtendedProp('location', newLocation);
+                        event.setProp('title', 'Booked: ' + event.extendedProps.name + ' (' + newLocation + ')');
+                        modal.style.display = 'none';
+                    }
+                }
+
+                window.onclick = function(e) {
+                    if (e.target == modal) {
+                        modal.style.display = 'none';
+                    }
+                }
+            }
         });
     </script>
 </body>
