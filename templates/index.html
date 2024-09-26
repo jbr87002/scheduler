@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Slot Signup</title>
+    <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css' rel='stylesheet' />
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js'></script>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        #calendar { max-width: 900px; margin: 0 auto; }
+        #timeslots {
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .timeslot {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 3px;
+        }
+        .timeslot button {
+            margin-left: 10px;
+        }
+        .timeslot.taken {
+            background-color: #ffe0e0;
+        }
+        .fc-day-available {
+            background-color: #e6ffe6 !important;
+        }
+        .fc-day-unavailable {
+            background-color: #ffe6e6 !important;
+        }
+        /* Remove these styles as they might be interfering */
+        /*
+        .fc-day-today {
+            background-color: inherit !important;
+        }
+        .fc-day-other {
+            background-color: inherit !important;
+        }
+        */
+        /* Ensure our custom styles take precedence */
+        .fc .fc-daygrid-day {
+            background-color: inherit;
+        }
+        .fc .fc-daygrid-day.fc-day-today {
+            background-color: inherit;
+        }
+        .fc .fc-day-other {
+            background-color: inherit;
+        }
+        /* Ensure text is visible on colored backgrounds */
+        .fc-daygrid-day-number {
+            color: #333 !important;
+        }
+    </style>
+</head>
+<body>
+    <h1>Time Slot Signup</h1>
+    <div id="calendar"></div>
+    <div id="timeslots"></div>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var calendarEl = document.getElementById('calendar');
+            var allEvents = [];
+
+            fetch('/api/timeslots')
+                .then(response => response.json())
+                .then(data => {
+                    allEvents = data;
+                    console.log("All events:", allEvents);  // Debug log
+                    initializeCalendar();
+                });
+
+            function initializeCalendar() {
+                var calendar = new FullCalendar.Calendar(calendarEl, {
+                    initialView: 'dayGridMonth',
+                    events: allEvents.map(event => ({
+                        id: event.id,
+                        title: event.is_available ? 'Available' : event.name,
+                        start: new Date(event.start_time),
+                        end: new Date(event.end_time),
+                        extendedProps: {
+                            is_available: event.is_available
+                        }
+                    })),
+                    eventClick: function(info) {
+                        if (info.event.extendedProps.is_available) {
+                            signUp(info.event.id);
+                        } else {
+                            alert('This time slot is already taken by ' + info.event.title);
+                        }
+                    },
+                    dateClick: function(info) {
+                        fetchTimeslots(info.dateStr);
+                    },
+                    datesSet: function(arg) {
+                        console.log('Calendar view changed');
+                        recolorCalendar();
+                    },
+                    dayCellDidMount: function(arg) {
+                        colorDay(arg.date, arg.el);
+                    }
+                });
+                calendar.render();
+                console.log('Calendar after render:', calendar);
+
+                // Force a re-render and recolor after a short delay
+                setTimeout(() => {
+                    recolorCalendar();
+                    console.log('Calendar after recolor');
+                }, 100);
+            }
+
+            function colorDay(date, dayEl) {
+                const dateStr = date.toISOString().split('T')[0];
+                const availableSlots = allEvents.filter(event => {
+                    const eventDate = new Date(event.start_time).toISOString().split('T')[0];
+                    return eventDate === dateStr && event.is_available;
+                });
+                console.log('Date:', dateStr, 'Available slots:', availableSlots.length, 'All slots for this day:', allEvents.filter(event => new Date(event.start_time).toISOString().split('T')[0] === dateStr).length);
+                
+                dayEl.classList.remove('fc-day-available', 'fc-day-unavailable');
+                
+                if (availableSlots.length > 0) {
+                    dayEl.classList.add('fc-day-available');
+                    dayEl.style.backgroundColor = '#e6ffe6';
+                    console.log('Date:', dateStr, 'Class added: fc-day-available');
+                } else {
+                    dayEl.classList.add('fc-day-unavailable');
+                    dayEl.style.backgroundColor = '#ffe6e6';
+                    console.log('Date:', dateStr, 'Class added: fc-day-unavailable');
+                }
+                console.log('Date:', dateStr, 'Final classes:', dayEl.className);
+            }
+
+            function recolorCalendar() {
+                const dayEls = document.querySelectorAll('.fc-daygrid-day');
+                dayEls.forEach(dayEl => {
+                    const date = new Date(dayEl.dataset.date);
+                    colorDay(date, dayEl);
+                });
+            }
+
+            function fetchTimeslots(date) {
+                const timeslots = allEvents.filter(slot => slot.start_time.startsWith(date));
+                displayTimeslots(timeslots);
+            }
+
+            function displayTimeslots(timeslots) {
+                const timeslotsDiv = document.getElementById('timeslots');
+                timeslotsDiv.innerHTML = '<h2>Time Slots</h2>';
+                if (timeslots.length === 0) {
+                    timeslotsDiv.innerHTML += '<p>No time slots for this day.</p>';
+                } else {
+                    timeslots.forEach(slot => {
+                        const slotDiv = document.createElement('div');
+                        slotDiv.className = 'timeslot' + (slot.is_available ? '' : ' taken');
+                        const startTime = new Date(slot.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        const endTime = new Date(slot.end_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        slotDiv.innerHTML = `${startTime} - ${endTime}`;
+                        if (slot.is_available) {
+                            const signupButton = document.createElement('button');
+                            signupButton.textContent = 'Sign Up';
+                            signupButton.onclick = () => signUp(slot.id);
+                            slotDiv.appendChild(signupButton);
+                        } else {
+                            slotDiv.innerHTML += ` - ${slot.name}`;
+                        }
+                        timeslotsDiv.appendChild(slotDiv);
+                    });
+                }
+            }
+
+            function signUp(slotId) {
+                const name = prompt('Enter your name to sign up for this time slot:');
+                if (name) {
+                    fetch('/api/signup', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: slotId, name: name })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert('Successfully signed up!');
+                            location.reload(); // Reload the page to refresh the calendar
+                        } else {
+                            alert('Failed to sign up: ' + data.message);
+                        }
+                    });
+                }
+            }
+
+        });
+    </script>
+</body>
+</html>

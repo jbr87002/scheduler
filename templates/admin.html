@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Manage Time Slots</title>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://unpkg.com/vis-timeline@latest/standalone/umd/vis-timeline-graph2d.min.js"></script>
+    <link href="https://unpkg.com/vis-timeline@latest/styles/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; }
+        form, #existingSlots { margin-bottom: 20px; }
+        input, button { margin: 5px 0; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        #timeline { height: 600px; }
+        .vis-timeline { border: 1px solid #ddd; }
+        .vis-item { background-color: #ffd700; border-color: #ffa500; }
+        .vis-item.selected { background-color: #a1e0a1; border-color: #78c278; }
+        .vis-time-axis .vis-grid.vis-minor { border-width: 1px; border-color: #f0f0f0; }
+        .vis-time-axis .vis-grid.vis-major { border-width: 2px; border-color: #e0e0e0; }
+        .vis-custom-time { width: 2px; background-color: #FF7F6E; }
+    </style>
+</head>
+<body>
+    <h1>Admin - Manage Time Slots</h1>
+    <h2>Add New Time Slots</h2>
+    <form id="timeslotForm">
+        <label for="date">Date:</label>
+        <input type="text" id="date" required><br>
+        <div id="timeline"></div>
+        <button type="submit">Add Time Slot(s)</button>
+    </form>
+    <div id="message"></div>
+    
+    <h2>Existing Time Slots</h2>
+    <div id="existingSlots"></div>
+
+    <script>
+        let timeline;
+        let items;
+        let selectedDate;
+
+        flatpickr("#date", {
+            dateFormat: "Y-m-d",
+            onChange: function(selectedDates, dateStr, instance) {
+                selectedDate = selectedDates[0];
+                initializeTimeline(selectedDate);
+            }
+        });
+
+        function initializeTimeline(date) {
+            const container = document.getElementById('timeline');
+            const options = {
+                start: new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0),
+                end: new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59),
+                editable: {
+                    updateTime: true,
+                    remove: false
+                },
+                selectable: true,
+                stack: false,
+                orientation: 'left',
+                timeAxis: { scale: 'minute', step: 30 },
+                zoomMax: 86400000,
+                zoomMin: 900000, // 15 minutes
+                format: {
+                    minorLabels: {
+                        minute: 'h:mma',
+                        hour: 'ha'
+                    }
+                },
+                zoomable: true,
+                moveable: true,
+                height: '600px',
+                snap: function (date, scale, step) {
+                    const minutes = Math.round(date.getMinutes() / 30) * 30;
+                    date.setMinutes(minutes);
+                    date.setSeconds(0);
+                    date.setMilliseconds(0);
+                    return date;
+                }
+            };
+
+            items = new vis.DataSet([]);
+            timeline = new vis.Timeline(container, items, options);
+
+            timeline.on('click', function(properties) {
+                if (properties.item) {
+                    const item = items.get(properties.item);
+                    item.className = item.className === 'selected' ? '' : 'selected';
+                    items.update(item);
+                } else if (properties.time) {
+                    const snappedTime = snapToInterval(properties.time, 30 * 60 * 1000);
+                    const endTime = new Date(snappedTime.getTime() + 30 * 60 * 1000);
+                    
+                    if (!isOverlapping(snappedTime, endTime)) {
+                        items.add({
+                            start: snappedTime,
+                            end: endTime,
+                            content: 'Available',
+                            type: 'range',
+                            className: 'selected'
+                        });
+                    }
+                }
+            });
+
+            timeline.on('move', function (item, callback) {
+                if (!isOverlapping(item.start, item.end, item.id)) {
+                    callback(item);
+                } else {
+                    callback(null);
+                }
+            });
+
+            timeline.on('update', function (item, callback) {
+                if (!isOverlapping(item.start, item.end, item.id)) {
+                    callback(item);
+                } else {
+                    callback(null);
+                }
+            });
+
+            updateVerticalScroll();
+        }
+
+        function isOverlapping(start, end, excludeId) {
+            const overlapping = items.get({
+                filter: function(item) {
+                    return item.id !== excludeId && 
+                           ((start >= item.start && start < item.end) ||
+                            (end > item.start && end <= item.end) ||
+                            (start <= item.start && end >= item.end));
+                }
+            });
+            return overlapping.length > 0;
+        }
+
+        function snapToInterval(date, interval) {
+            const snappedTime = new Date(Math.round(date.getTime() / interval) * interval);
+            snappedTime.setSeconds(0);
+            snappedTime.setMilliseconds(0);
+            return snappedTime;
+        }
+
+        function updateVerticalScroll() {
+            const timelineInner = document.querySelector('.vis-panel.vis-center');
+            if (timelineInner) {
+                timelineInner.style.overflowY = 'hidden';
+                timelineInner.style.overflowX = 'hidden';
+            }
+        }
+
+        document.getElementById('timeslotForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const slots = items.get().map(item => ({
+                start_time: new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), item.start.getHours(), item.start.getMinutes()).toISOString(),
+                end_time: new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), item.end.getHours(), item.end.getMinutes()).toISOString()
+            }));
+
+            if (slots.length === 0) {
+                alert('Please select at least one time slot before submitting.');
+                return;
+            }
+
+            fetch('/api/admin/set_timeslots', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(slots)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('message').textContent = 'Time slot(s) added successfully!';
+                    items.clear();
+                    fetchExistingSlots();
+                } else {
+                    document.getElementById('message').textContent = 'Failed to add time slot(s).';
+                }
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                document.getElementById('message').textContent = 'An error occurred.';
+            });
+        });
+
+        function fetchExistingSlots() {
+            fetch('/api/admin/get_timeslots')
+                .then(response => response.json())
+                .then(data => {
+                    const slotsDiv = document.getElementById('existingSlots');
+                    slotsDiv.innerHTML = '<table><tr><th>Date</th><th>Start Time</th><th>End Time</th><th>Available</th><th>Actions</th></tr>';
+                    data.forEach(slot => {
+                        const row = `<tr>
+                            <td>${new Date(slot.start_time).toLocaleDateString()}</td>
+                            <td>${new Date(slot.start_time).toLocaleTimeString()}</td>
+                            <td>${new Date(slot.end_time).toLocaleTimeString()}</td>
+                            <td>${slot.is_available ? 'Yes' : 'No'}</td>
+                            <td>
+                                <button onclick="editSlot(${slot.id})">Edit</button>
+                                <button onclick="deleteSlot(${slot.id})">Delete</button>
+                            </td>
+                        </tr>`;
+                        slotsDiv.innerHTML += row;
+                    });
+                    slotsDiv.innerHTML += '</table>';
+                });
+        }
+
+        function editSlot(id) {
+            // Implement edit functionality
+            console.log('Edit slot', id);
+        }
+
+        function deleteSlot(id) {
+            if (confirm('Are you sure you want to delete this time slot?')) {
+                fetch(`/api/admin/delete_timeslot/${id}`, { method: 'DELETE' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            fetchExistingSlots();
+                        } else {
+                            alert('Failed to delete time slot');
+                        }
+                    });
+            }
+        }
+
+        // Fetch existing slots when the page loads
+        fetchExistingSlots();
+    </script>
+</body>
+</html>
