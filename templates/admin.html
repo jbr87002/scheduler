@@ -36,7 +36,7 @@
             background-color: #f2f2f2; 
         }
         #timeline { 
-            height: 600px;
+            height: 200px;
             width: 100%;
             margin-top: 20px;
             margin-bottom: 20px;
@@ -69,21 +69,29 @@
         .vis-foreground .vis-group {
             border-bottom: 1px solid #ddd;
         }
+        /* Add these styles to differentiate between available and booked slots */
+        .available-slot {
+            background-color: #a8e6cf;
+            border-color: #1b4332;
+        }
+        .booked-slot {
+            background-color: #ffafcc;
+            border-color: #9d0208;
+        }
     </style>
 </head>
 <body>
     <h1>Admin - Manage Time Slots</h1>
-    <h2>Add New Time Slots</h2>
+    <h2>Manage Time Slots</h2>
     <form id="timeslotForm">
         <label for="date">Start Date:</label>
-        <input type="text" id="date" required><br>
+        <input type="text" id="date" required>
+        <button type="button" id="prevDay">←</button>
+        <button type="button" id="nextDay">→</button><br>
         <div id="timeline"></div>
         <button type="submit">Save Time Slots</button>
     </form>
     <div id="message"></div>
-    
-    <h2>Existing Time Slots</h2>
-    <div id="existingSlots"></div>
 
     <script>
         let timeline;
@@ -91,35 +99,46 @@
         let selectedDate;
 
         // Initialize Flatpickr
-        flatpickr("#date", {
+        const datePicker = flatpickr("#date", {
             dateFormat: "Y-m-d",
+            defaultDate: new Date().toISOString().split('T')[0],
             onChange: function(selectedDates, dateStr, instance) {
-                selectedDate = selectedDates[0];
-                initializeTimeline(selectedDate);
+                if (selectedDates.length > 0) {
+                    selectedDate = new Date(Date.UTC(selectedDates[0].getUTCFullYear(), selectedDates[0].getUTCMonth(), selectedDates[0].getUTCDate()));
+                    initializeTimeline(selectedDate);
+                }
             }
         });
 
-        function initializeTimeline(date){ 
+        // Add event listeners for day navigation buttons
+        document.getElementById('prevDay').addEventListener('click', () => changeDay(-1));
+        document.getElementById('nextDay').addEventListener('click', () => changeDay(1));
+
+        function changeDay(offset) {
+            selectedDate = new Date(Date.UTC(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), selectedDate.getUTCDate() + offset));
+            datePicker.setDate(selectedDate.toISOString().split('T')[0]);
+            initializeTimeline(selectedDate);
+        }
+
+        function initializeTimeline(date) {
             const container = document.getElementById('timeline');
+            container.innerHTML = ''; // Clear existing timeline
             const groups = [];
 
             // Create 7 groups for the selected day and the next 6 days
             for (let i = 0; i < 7; i++) {
-                const groupDate = new Date(date);
-                groupDate.setDate(date.getDate() + i);
+                const groupDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + i));
                 groups.push({
                     id: i,
-                    content: groupDate.toLocaleDateString('en-US', { 
-                        weekday: 'short', 
-                        month: 'short', 
-                        day: 'numeric' 
-                    })
+                    content: groupDate.toISOString().split('T')[0]
                 });
             }
 
             const options = {
-                start: new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9, 0, 0), // 9 AM
-                end: new Date(date.getFullYear(), date.getMonth(), date.getDate(), 20, 0, 0), // 8 PM
+                start: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 8, 30, 0)), // 8:30 AM UTC
+                end: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 20, 30, 0)), // 8:30 PM UTC
+                min: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 8, 30, 0)), // Set minimum time to 8:30 AM UTC
+                max: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 6, 20, 30, 0)), // Set maximum time to 8:30 PM UTC of the 7th day
                 editable: {
                     updateTime: true,
                     updateGroup: true,
@@ -132,28 +151,45 @@
                     scale: 'hour', 
                     step: 1 
                 },
-                zoomMax: 24 * 60 * 60 * 1000, // 1 day
-                zoomMin: 60 * 60 * 1000, // 1 hour
+                zoomMax: 7 * 24 * 60 * 60 * 1000, // 7 days
+                zoomMin: 12 * 60 * 60 * 1000, // 12 hours (8:30 AM to 8:30 PM)
                 format: {
                     minorLabels: {
                         hour: 'ha',
                         minute: 'h:mma'
                     }
                 },
-                zoomable: true,
+                zoomable: false,
                 moveable: true,
-                height: '600px', // Adjusted height
+                height: '200px',
                 snap: snapToInterval,
                 groupOrder: 'id',
                 groups: groups,
                 verticalScroll: true,
-                horizontalScroll: false,
-                groupHeightMode: 'fixed',
+                horizontalScroll: true,
+                groupHeightMode: 'auto',
                 groupMinHeight: 50
             };
 
             items = new vis.DataSet([]);
             timeline = new vis.Timeline(container, items, options);
+
+            // Fetch and display existing time slots
+            fetchAndDisplayExistingSlots(date);
+
+            // Restrict visible time range
+            timeline.on('rangechange', function(properties) {
+                const visibleStart = properties.start;
+                const visibleEnd = properties.end;
+
+                // Adjust the start and end times to always show 8:30 AM to 8:30 PM
+                const newStart = new Date(Date.UTC(visibleStart.getUTCFullYear(), visibleStart.getUTCMonth(), visibleStart.getUTCDate(), 8, 30, 0));
+                const newEnd = new Date(Date.UTC(visibleStart.getUTCFullYear(), visibleStart.getUTCMonth(), visibleStart.getUTCDate(), 20, 30, 0));
+
+                if (visibleStart.getTime() !== newStart.getTime() || visibleEnd.getTime() !== newEnd.getTime()) {
+                    timeline.setWindow(newStart, newEnd, {animation: false});
+                }
+            });
 
             // Handle click to add time slots
             timeline.on('click', function(properties) {
@@ -164,12 +200,13 @@
                     // Prevent overlapping within the same group (day)
                     if (!isOverlapping(snappedTime, endTime, properties.group)) {
                         items.add({
-                            id: new Date().getTime(), // Unique ID based on timestamp
+                            id: 'new_' + new Date().getTime(), // Add 'new_' prefix for new slots
                             start: snappedTime,
                             end: endTime,
                             content: 'Available',
                             group: properties.group,
-                            type: 'range'
+                            type: 'range',
+                            className: 'available-slot'
                         });
                     } else {
                         alert('Time slot overlaps with an existing slot.');
@@ -180,7 +217,14 @@
             // Handle double-click to delete time slots
             timeline.on('doubleClick', function(properties) {
                 if (properties.item) {
-                    items.remove(properties.item);
+                    const item = items.get(properties.item);
+                    if (item.className === 'booked-slot') {
+                        if (confirm(`This slot is booked by ${item.content.split(': ')[1]}. Are you sure you want to delete it?`)) {
+                            deleteSlot(item.id);
+                        }
+                    } else {
+                        deleteSlot(item.id);
+                    }
                 }
             });
 
@@ -204,6 +248,38 @@
             });
 
             updateVerticalScroll();
+        }
+
+        // New function to fetch and display existing time slots
+        function fetchAndDisplayExistingSlots(date) {
+            const startOfWeek = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0));
+            const endOfWeek = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 7, 0, 0, 0));
+
+            fetch('/api/admin/get_timeslots')
+                .then(response => response.json())
+                .then(data => {
+                    const filteredSlots = data.filter(slot => {
+                        const slotDate = new Date(slot.start_time);
+                        return slotDate >= startOfWeek && slotDate < endOfWeek;
+                    });
+
+                    items.clear();
+                    filteredSlots.forEach(slot => {
+                        const startTime = new Date(slot.start_time);
+                        const endTime = new Date(slot.end_time);
+                        const group = startTime.getUTCDay();
+
+                        items.add({
+                            id: slot.id,
+                            start: startTime,
+                            end: endTime,
+                            group: group,
+                            content: slot.is_available ? 'Available' : `Booked: ${slot.name || 'N/A'}`,
+                            className: slot.is_available ? 'available-slot' : 'booked-slot'
+                        });
+                    });
+                })
+                .catch(error => console.error('Error fetching existing slots:', error));
         }
 
         // Function to check overlapping time slots within the same group
@@ -242,11 +318,15 @@
         document.getElementById('timeslotForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const slots = items.get().map(item => {
-                const slotDate = new Date(item.start);
-                return {
-                    start_time: new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate(), slotDate.getHours(), slotDate.getMinutes()).toISOString(),
-                    end_time: new Date(item.end).toISOString()
+                const slotData = {
+                    start_time: item.start.toISOString(),
+                    end_time: item.end.toISOString(),
+                    is_available: item.className === 'available-slot'
                 };
+                if (!item.id.startsWith('new_')) {
+                    slotData.id = item.id;
+                }
+                return slotData;
             });
 
             if (slots.length === 0) {
@@ -265,8 +345,7 @@
             .then(data => {
                 if (data.success) {
                     document.getElementById('message').textContent = 'Time slots saved successfully!';
-                    items.clear();
-                    fetchExistingSlots();
+                    fetchAndDisplayExistingSlots(selectedDate);
                 } else {
                     document.getElementById('message').textContent = 'Failed to save time slots.';
                 }
@@ -277,46 +356,40 @@
             });
         });
 
-        // Fetch and display existing time slots
-        function fetchExistingSlots() {
-            fetch('/api/admin/get_timeslots')
-                .then(response => response.json())
-                .then(data => {
-                    const slotsDiv = document.getElementById('existingSlots');
-                    slotsDiv.innerHTML = '<table><tr><th>Date</th><th>Start Time</th><th>End Time</th><th>Available</th><th>Actions</th></tr>';
-                    data.forEach(slot => {
-                        const row = `<tr>
-                            <td>${new Date(slot.start_time).toLocaleDateString()}</td>
-                            <td>${new Date(slot.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-                            <td>${new Date(slot.end_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-                            <td>${slot.is_available ? 'Yes' : 'No'}</td>
-                            <td>
-                                <button onclick="deleteSlot(${slot.id})">Delete</button>
-                            </td>
-                        </tr>`;
-                        slotsDiv.innerHTML += row;
-                    });
-                    slotsDiv.innerHTML += '</table>';
-                });
-        }
-
         // Function to delete a time slot
         function deleteSlot(id) {
-            if (confirm('Are you sure you want to delete this time slot?')) {
+            if (typeof id === 'string' && id.startsWith('new_')) {
+                // This is an unsaved slot, just remove it from the timeline
+                items.remove(id);
+                document.getElementById('message').textContent = 'Unsaved time slot removed.';
+            } else {
+                // This is a saved slot, delete from the backend
                 fetch(`/api/admin/delete_timeslot/${id}`, { method: 'DELETE' })
-                    .then(response => response.json())
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
                     .then(data => {
                         if (data.success) {
-                            fetchExistingSlots();
+                            items.remove(id);
+                            document.getElementById('message').textContent = 'Time slot deleted successfully!';
                         } else {
-                            alert('Failed to delete time slot');
+                            alert(`Failed to delete time slot: ${data.message}`);
                         }
+                    })
+                    .catch((error) => {
+                        console.error('Error:', error);
+                        document.getElementById('message').textContent = `An error occurred while deleting the time slot: ${error.message}`;
                     });
             }
         }
 
-        // Fetch existing slots when the page loads
-        fetchExistingSlots();
+        // Initialize the timeline with the current date when the page loads
+        selectedDate = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
+        datePicker.setDate(selectedDate.toISOString().split('T')[0]);
+        initializeTimeline(selectedDate);
     </script>
 </body>
 </html>

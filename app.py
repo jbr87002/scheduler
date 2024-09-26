@@ -1,11 +1,14 @@
 from flask import Flask, request, jsonify, render_template, send_file
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta
+from pytz import UTC
 import icalendar
 import os
 import io
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # This will enable CORS for all routes
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///timeslots.db')
 db = SQLAlchemy(app)
 
@@ -46,18 +49,38 @@ def signup():
 
 @app.route('/api/admin/set_timeslots', methods=['POST'])
 def set_timeslots():
-    # This should be protected with authentication in a real app
-    data = request.json
-    for slot in data:
-        new_slot = TimeSlot(
-            start_time=datetime.fromisoformat(slot['start_time']),
-            end_time=datetime.fromisoformat(slot['end_time']),
-            is_available=True
-        )
-        db.session.add(new_slot)
-        print(f"Adding slot: {new_slot.start_time} - {new_slot.end_time}")  # Debug print
+    slots = request.json
+    
+    # Get the date range for the slots
+    start_date = min(datetime.fromisoformat(slot['start_time']) for slot in slots).replace(tzinfo=UTC).date()
+    end_date = max(datetime.fromisoformat(slot['end_time']) for slot in slots).replace(tzinfo=UTC).date() + timedelta(days=1)
+    
+    # Delete all existing slots in the date range that are not in the new set
+    existing_slots = TimeSlot.query.filter(TimeSlot.start_time >= start_date, TimeSlot.start_time < end_date).all()
+    for existing_slot in existing_slots:
+        if not any(slot.get('id') == existing_slot.id for slot in slots):
+            db.session.delete(existing_slot)
+    
+    # Update or add new slots
+    for slot in slots:
+        if 'id' in slot:
+            # Update existing slot
+            existing_slot = TimeSlot.query.get(slot['id'])
+            if existing_slot:
+                existing_slot.start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC)
+                existing_slot.end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC)
+                existing_slot.is_available = slot.get('is_available', True)
+        else:
+            # Add new slot
+            new_slot = TimeSlot(
+                start_time=datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC),
+                end_time=datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC),
+                is_available=slot.get('is_available', True)
+            )
+            db.session.add(new_slot)
+    
     db.session.commit()
-    return jsonify({'success': True})
+    return jsonify({"success": True})
 
 @app.route('/admin')
 def admin():
@@ -68,19 +91,23 @@ def get_admin_timeslots():
     timeslots = TimeSlot.query.order_by(TimeSlot.start_time).all()
     return jsonify([{
         'id': slot.id,
-        'start_time': slot.start_time.isoformat(),
-        'end_time': slot.end_time.isoformat(),
+        'start_time': slot.start_time.replace(tzinfo=UTC).isoformat(),
+        'end_time': slot.end_time.replace(tzinfo=UTC).isoformat(),
         'is_available': slot.is_available,
         'name': slot.name
     } for slot in timeslots])
 
 @app.route('/api/admin/delete_timeslot/<int:id>', methods=['DELETE'])
 def delete_timeslot(id):
+    print(f"Attempting to delete timeslot with id: {id}")  # Debug print
     slot = TimeSlot.query.get(id)
     if slot:
+        print(f"Timeslot found: {slot}")  # Debug print
         db.session.delete(slot)
         db.session.commit()
+        print("Timeslot deleted successfully")  # Debug print
         return jsonify({'success': True})
+    print(f"Timeslot with id {id} not found")  # Debug print
     return jsonify({'success': False, 'message': 'Time slot not found'})
 
 @app.route('/api/export')
