@@ -7,55 +7,41 @@
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css' rel='stylesheet' />
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js'></script>
     <style>
-        body { font-family: Arial, sans-serif; }
-        #calendar { max-width: 900px; margin: 0 auto; }
-        #timeslots {
-            max-width: 900px;
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            padding: 20px; 
+        }
+        #calendar {
+            max-width: 1200px;
             margin: 20px auto;
-            padding: 20px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
         }
-        .timeslot {
-            margin: 10px 0;
-            padding: 10px;
-            background-color: #f0f0f0;
-            border-radius: 3px;
+        .fc-event {
+            cursor: pointer;
         }
-        .timeslot button {
-            margin-left: 10px;
+        .available-slot {
+            background-color: #a8e6cf;
+            border-color: #1b4332;
         }
-        .timeslot.taken {
-            background-color: #ffe0e0;
+        .booked-slot {
+            background-color: #ffafcc;
+            border-color: #9d0208;
         }
-        .fc-day-available {
-            background-color: #e6ffe6 !important;
+        .fc-timegrid-slot[data-time="20:00:00"] {
+            border-bottom: 2px solid #ff0000 !important;
         }
-        .fc-day-unavailable {
-            background-color: #ffe6e6 !important;
+        .fc-timegrid-slot[data-time="20:00:00"] ~ div {
+            display: none !important;
         }
-        /* Remove these styles as they might be interfering */
-        /*
-        .fc-day-today {
-            background-color: inherit !important;
+        .fc-timegrid-axis {
+            display: none;
         }
-        .fc-day-other {
-            background-color: inherit !important;
+        .fc .fc-timegrid-slot {
+            height: 3em;
         }
-        */
-        /* Ensure our custom styles take precedence */
-        .fc .fc-daygrid-day {
-            background-color: inherit;
-        }
-        .fc .fc-daygrid-day.fc-day-today {
-            background-color: inherit;
-        }
-        .fc .fc-day-other {
-            background-color: inherit;
-        }
-        /* Ensure text is visible on colored backgrounds */
-        .fc-daygrid-day-number {
-            color: #333 !important;
+        .fc .fc-timegrid-slot-label {
+            vertical-align: top;
         }
         .repeated-slot {
             background-color: #e6e6ff !important;
@@ -94,7 +80,6 @@
 <body>
     <h1>Time Slot Signup</h1>
     <div id="calendar"></div>
-    <div id="timeslots"></div>
     <div id="signupModal">
         <div class="modal-content">
             <span class="close">&times;</span>
@@ -127,12 +112,15 @@
 
             function initializeCalendar() {
                 var calendar = new FullCalendar.Calendar(calendarEl, {
-                    initialView: 'dayGridMonth',
+                    initialView: 'timeGridWeek',
                     headerToolbar: {
                         left: 'prev,next today',
                         center: 'title',
-                        right: 'dayGridMonth,timeGridWeek'
                     },
+                    slotMinTime: '09:00:00',
+                    slotMaxTime: '20:00:00',
+                    height: 'auto',
+                    allDaySlot: false,
                     events: allEvents.map(event => ({
                         id: event.id,
                         title: event.is_available ? event.location : `${event.name} (${event.location})`,
@@ -142,7 +130,7 @@
                             is_available: event.is_available,
                             isRepeated: event.is_repeated
                         },
-                        className: event.is_repeated ? 'repeated-slot' : ''
+                        className: event.is_available ? 'available-slot' : 'booked-slot'
                     })),
                     eventClick: function(info) {
                         if (info.event.extendedProps.is_available) {
@@ -151,85 +139,10 @@
                             let message = `This time slot is already taken by ${info.event.title}`;
                             alert(message);
                         }
-                    },
-                    dateClick: function(info) {
-                        fetchTimeslots(info.dateStr);
-                    },
-                    datesSet: function(arg) {
-                        console.log('Calendar view changed');
-                        recolorCalendar();
-                    },
-                    dayCellDidMount: function(arg) {
-                        colorDay(arg.date, arg.el);
                     }
                 });
                 calendar.render();
                 console.log('Calendar after render:', calendar);
-
-                // Force a re-render and recolor after a short delay
-                setTimeout(() => {
-                    recolorCalendar();
-                    console.log('Calendar after recolor');
-                }, 100);
-            }
-
-            function colorDay(date, dayEl) {
-                const dateStr = date.toISOString().split('T')[0];
-                const availableSlots = allEvents.filter(event => {
-                    const eventDate = new Date(event.start_time).toISOString().split('T')[0];
-                    return eventDate === dateStr && event.is_available;
-                });
-                console.log('Date:', dateStr, 'Available slots:', availableSlots.length, 'All slots for this day:', allEvents.filter(event => new Date(event.start_time).toISOString().split('T')[0] === dateStr).length);
-                
-                dayEl.classList.remove('fc-day-available', 'fc-day-unavailable');
-                
-                if (availableSlots.length > 0) {
-                    dayEl.classList.add('fc-day-available');
-                    dayEl.style.backgroundColor = '#e6ffe6';
-                    console.log('Date:', dateStr, 'Class added: fc-day-available');
-                } else {
-                    dayEl.classList.add('fc-day-unavailable');
-                    dayEl.style.backgroundColor = '#ffe6e6';
-                    console.log('Date:', dateStr, 'Class added: fc-day-unavailable');
-                }
-                console.log('Date:', dateStr, 'Final classes:', dayEl.className);
-            }
-
-            function recolorCalendar() {
-                const dayEls = document.querySelectorAll('.fc-daygrid-day');
-                dayEls.forEach(dayEl => {
-                    const date = new Date(dayEl.dataset.date);
-                    colorDay(date, dayEl);
-                });
-            }
-
-            function fetchTimeslots(date) {
-                const timeslots = allEvents.filter(slot => slot.start_time.startsWith(date));
-                displayTimeslots(timeslots);
-            }
-
-            function displayTimeslots(timeslots) {
-                const container = document.getElementById('timeslots');
-                container.innerHTML = '';
-                timeslots.forEach(slot => {
-                    const startTime = new Date(slot.start_time);
-                    const endTime = new Date(slot.end_time);
-                    const button = document.createElement('button');
-                    button.classList.add('timeslot');
-                    if (!slot.is_available) {
-                        button.classList.add('booked');
-                    }
-                    button.innerHTML = `
-                        <span class="date">${startTime.toLocaleDateString()}</span>
-                        <span class="time">${startTime.toLocaleTimeString()} - ${endTime.toLocaleTimeString()}</span>
-                        <span class="status">${slot.is_available ? 'Available' : 'Booked'}</span>
-                    `;
-                    button.title = slot.is_available ? slot.location : `Booked by ${slot.name}`;
-                    if (slot.is_available) {
-                        button.onclick = () => bookSlot(slot.id);
-                    }
-                    container.appendChild(button);
-                });
             }
 
             function signUp(slotId) {
@@ -271,7 +184,6 @@
                     });
                 }
             }
-
         });
     </script>
 </body>
