@@ -128,6 +128,11 @@
             function initializeCalendar() {
                 var calendar = new FullCalendar.Calendar(calendarEl, {
                     initialView: 'dayGridMonth',
+                    headerToolbar: {
+                        left: 'prev,next today',
+                        center: 'title',
+                        right: 'dayGridMonth,timeGridWeek'
+                    },
                     events: allEvents.map(event => ({
                         id: event.id,
                         title: event.is_available ? event.location : `${event.name} (${event.location})`,

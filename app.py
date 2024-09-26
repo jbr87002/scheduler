@@ -10,6 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from dotenv import load_dotenv
 from dateutil.relativedelta import relativedelta
+from sqlalchemy.exc import SQLAlchemyError
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -87,39 +88,65 @@ def signup():
 @admin_required
 def set_timeslots():
     slots = request.json
-    
-    # Get the date range for the slots
-    start_date = min(datetime.fromisoformat(slot['start_time']) for slot in slots).replace(tzinfo=UTC).date()
-    end_date = max(datetime.fromisoformat(slot['end_time']) for slot in slots).replace(tzinfo=UTC).date() + timedelta(days=1)
-    
-    # Delete all existing slots in the date range that are not in the new set
-    existing_slots = TimeSlot.query.filter(TimeSlot.start_time >= start_date, TimeSlot.start_time < end_date).all()
-    for existing_slot in existing_slots:
-        if not any(slot.get('id') == existing_slot.id for slot in slots):
-            db.session.delete(existing_slot)
-    
-    # Update or add new slots
-    for slot in slots:
-        if slot.get('id'):
-            # Update existing slot
-            existing_slot = TimeSlot.query.get(slot['id'])
-            if existing_slot:
+    print(f"Received {len(slots)} slots")  # Debug print
+
+    try:
+        # Start a transaction
+        db.session.begin_nested()
+
+        # Get all existing slots
+        existing_slots = {str(slot.id): slot for slot in TimeSlot.query.all()}
+
+        # Update or create slots
+        updated_or_created_ids = set()
+        for slot in slots:
+            slot_id = slot.get('id')
+            if slot_id and slot_id in existing_slots:
+                # Update existing slot
+                existing_slot = existing_slots[slot_id]
                 existing_slot.start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC)
                 existing_slot.end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC)
                 existing_slot.is_available = slot.get('is_available', True)
-                # Do not update location for existing slots
-        else:
-            # Add new slot
-            new_slot = TimeSlot(
-                start_time=datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC),
-                end_time=datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC),
-                is_available=slot.get('is_available', True),
-                location=slot['location']  # Location is required for new slots
-            )
-            db.session.add(new_slot)
-    
-    db.session.commit()
-    return jsonify({"success": True})
+                existing_slot.name = slot.get('name')
+                existing_slot.location = slot['location']
+                updated_or_created_ids.add(slot_id)
+                print(f"Updated slot {slot_id}")  # Debug print
+            else:
+                # Add new slot
+                new_slot = TimeSlot(
+                    start_time=datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC),
+                    end_time=datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC),
+                    is_available=slot.get('is_available', True),
+                    name=slot.get('name'),
+                    location=slot['location']
+                )
+                db.session.add(new_slot)
+                db.session.flush()  # This will assign an ID to the new slot
+                updated_or_created_ids.add(str(new_slot.id))
+                print(f"Added new slot with ID {new_slot.id}")  # Debug print
+
+        # Delete slots that were not in the received data
+        for old_id in set(existing_slots.keys()) - updated_or_created_ids:
+            db.session.delete(existing_slots[old_id])
+            print(f"Deleted slot {old_id}")  # Debug print
+
+        # Commit the transaction
+        db.session.commit()
+        
+        return jsonify({
+            "success": True, 
+            "message": f"Successfully processed {len(slots)} slots"
+        })
+    except SQLAlchemyError as e:
+        # Rollback the transaction
+        db.session.rollback()
+        
+        print(f"Error saving slots: {str(e)}")
+        
+        return jsonify({
+            "success": False,
+            "message": f"Error saving slots: {str(e)}. Original data preserved."
+        }), 500
 
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
