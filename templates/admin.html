@@ -4,12 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin - Manage Time Slots</title>
-    <!-- Flatpickr for date selection -->
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <!-- Vis-Timeline for scheduling -->
     <script src="https://unpkg.com/vis-timeline@latest/standalone/umd/vis-timeline-graph2d.min.js"></script>
     <link href="https://unpkg.com/vis-timeline@latest/styles/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
+    <!-- FullCalendar scripts and styles -->
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js'></script>
     <style>
         body { 
             font-family: Arial, sans-serif; 
@@ -23,18 +22,6 @@
         input, button { 
             margin: 5px 0; 
         }
-        table { 
-            width: 100%; 
-            border-collapse: collapse; 
-        }
-        th, td { 
-            border: 1px solid #ddd; 
-            padding: 8px; 
-            text-align: left; 
-        }
-        th { 
-            background-color: #f2f2f2; 
-        }
         #timeline { 
             height: 200px;
             width: 100%;
@@ -45,7 +32,7 @@
             border: 1px solid #ddd;
         }
         .vis-item {
-            height: 30px; /* Adjust the height of time slots */
+            height: 30px;
             border-radius: 0;
             border-width: 1px;
             border-style: solid;
@@ -69,7 +56,6 @@
         .vis-foreground .vis-group {
             border-bottom: 1px solid #ddd;
         }
-        /* Add these styles to differentiate between available and booked slots */
         .available-slot {
             background-color: #a8e6cf;
             border-color: #1b4332;
@@ -78,16 +64,25 @@
             background-color: #ffafcc;
             border-color: #9d0208;
         }
+        #calendar {
+            margin-bottom: 20px;
+        }
+        .fc-day-future {
+            background-color: #ffffff;
+        }
+        .fc-day-future.has-slots {
+            background-color: #e6f3ff;
+        }
+        .fc-day-future.fully-booked {
+            background-color: #ffebee;
+        }
     </style>
 </head>
 <body>
     <h1>Admin - Manage Time Slots</h1>
+    <div id="calendar"></div>
     <h2>Manage Time Slots</h2>
     <form id="timeslotForm">
-        <label for="date">Start Date:</label>
-        <input type="text" id="date" required>
-        <button type="button" id="prevDay">←</button>
-        <button type="button" id="nextDay">→</button><br>
         <label for="defaultLocation">Default Location:</label>
         <input type="text" id="defaultLocation" placeholder="Enter default location">
         <br>
@@ -100,35 +95,42 @@
         let timeline;
         let items;
         let selectedDate;
+        let calendar;
 
-        // Initialize Flatpickr
-        const datePicker = flatpickr("#date", {
-            dateFormat: "Y-m-d",
-            defaultDate: new Date().toISOString().split('T')[0],
-            onChange: function(selectedDates, dateStr, instance) {
-                if (selectedDates.length > 0) {
-                    selectedDate = new Date(selectedDates[0]);
+        function initializeCalendar() {
+            const calendarEl = document.getElementById('calendar');
+            calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: 'dayGridMonth',
+                dateClick: function(info) {
+                    selectedDate = info.date;
                     initializeTimeline(selectedDate);
+                },
+                events: function(fetchInfo, successCallback, failureCallback) {
+                    fetch('/api/admin/get_timeslots')
+                        .then(response => response.json())
+                        .then(data => {
+                            const events = data.map(slot => ({
+                                start: slot.start_time,
+                                end: slot.end_time,
+                                display: 'background',
+                                className: slot.is_available ? 'has-slots' : 'fully-booked'
+                            }));
+                            successCallback(events);
+                        })
+                        .catch(error => {
+                            console.error('Error fetching events:', error);
+                            failureCallback(error);
+                        });
                 }
-            }
-        });
-
-        // Add event listeners for day navigation buttons
-        document.getElementById('prevDay').addEventListener('click', () => changeDay(-1));
-        document.getElementById('nextDay').addEventListener('click', () => changeDay(1));
-
-        function changeDay(offset) {
-            selectedDate.setDate(selectedDate.getDate() + offset);
-            datePicker.setDate(selectedDate);
-            initializeTimeline(selectedDate);
+            });
+            calendar.render();
         }
 
         function initializeTimeline(date) {
             const container = document.getElementById('timeline');
-            container.innerHTML = ''; // Clear existing timeline
+            container.innerHTML = '';
             const groups = [];
 
-            // Create 7 groups for the selected day and the next 6 days
             for (let i = 0; i < 7; i++) {
                 const groupDate = new Date(date);
                 groupDate.setDate(date.getDate() + i);
@@ -155,8 +157,8 @@
                     scale: 'hour', 
                     step: 1 
                 },
-                zoomMax: 7 * 24 * 60 * 60 * 1000, // 7 days
-                zoomMin: 12 * 60 * 60 * 1000, // 12 hours (8:30 AM to 8:30 PM)
+                zoomMax: 7 * 24 * 60 * 60 * 1000,
+                zoomMin: 12 * 60 * 60 * 1000,
                 format: {
                     minorLabels: {
                         hour: 'ha',
@@ -176,28 +178,22 @@
             items = new vis.DataSet([]);
             timeline = new vis.Timeline(container, items, options);
 
-            // Fetch and display existing time slots
             fetchAndDisplayExistingSlots(date);
 
-            // Restrict visible time range
             timeline.on('rangechange', function(properties) {
                 const visibleStart = properties.start;
                 const visibleEnd = properties.end;
-
-                // Adjust the start and end times to always show 8:30 AM to 8:30 PM
                 const newStart = new Date(visibleStart.getFullYear(), visibleStart.getMonth(), visibleStart.getDate(), 8, 30, 0);
                 const newEnd = new Date(visibleStart.getFullYear(), visibleStart.getMonth(), visibleStart.getDate(), 20, 30, 0);
-
                 if (visibleStart.getTime() !== newStart.getTime() || visibleEnd.getTime() !== newEnd.getTime()) {
                     timeline.setWindow(newStart, newEnd, {animation: false});
                 }
             });
 
-            // Handle click to add time slots
             timeline.on('click', function(properties) {
                 if (!properties.item) {
                     const snappedTime = snapToInterval(properties.time);
-                    const endTime = new Date(snappedTime.getTime() + 60 * 60 * 1000); // 60 minutes
+                    const endTime = new Date(snappedTime.getTime() + 60 * 60 * 1000);
                     const defaultLocation = document.getElementById('defaultLocation').value;
 
                     if (!defaultLocation.trim()) {
@@ -205,7 +201,6 @@
                         return;
                     }
 
-                    // Prevent overlapping within the same group (day)
                     if (!isOverlapping(snappedTime, endTime, properties.group)) {
                         items.add({
                             id: 'new_' + new Date().getTime(),
@@ -223,7 +218,6 @@
                 }
             });
 
-            // Handle double-click to delete time slots
             timeline.on('doubleClick', debounce(function(properties) {
                 if (properties.item) {
                     const item = items.get(properties.item);
@@ -237,15 +231,14 @@
                         }
                     }
                 }
-            }, 300)); // 300ms debounce
+            }, 300));
 
-            // Ensure no overlapping when moving/resizing
             timeline.on('move', function (item, callback) {
                 if (!isOverlapping(item.start, item.end, item.group, item.id)) {
                     callback(item);
                 } else {
                     alert('Cannot move time slot to overlap with an existing slot.');
-                    callback(null); // Reject the move
+                    callback(null);
                 }
             });
 
@@ -254,12 +247,14 @@
                     callback(item);
                 } else {
                     alert('Cannot resize time slot to overlap with an existing slot.');
-                    callback(null); // Reject the resize
+                    callback(null);
                 }
             });
+
+            calendar.gotoDate(date);
+            calendar.select(date);
         }
 
-        // New function to fetch and display existing time slots
         function fetchAndDisplayExistingSlots(date) {
             const startOfWeek = new Date(date.getFullYear(), date.getMonth(), date.getDate());
             const endOfWeek = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7);
@@ -289,12 +284,11 @@
                             is_available: slot.is_available
                         });
                     });
-                    timeline.redraw(); // Redraw the timeline to reflect changes
+                    timeline.redraw();
                 })
                 .catch(error => console.error('Error fetching existing slots:', error));
         }
 
-        // Function to check overlapping time slots within the same group
         function isOverlapping(start, end, group, excludeId = null) {
             const overlapping = items.get({
                 filter: function(item) {
@@ -308,25 +302,14 @@
             return overlapping.length > 0;
         }
 
-        // Snap function to align to 30-minute intervals
         function snapToInterval(date) {
-            const interval = 30 * 60 * 1000; // 30 minutes
+            const interval = 30 * 60 * 1000;
             const snappedTime = new Date(Math.round(date.getTime() / interval) * interval);
             snappedTime.setSeconds(0);
             snappedTime.setMilliseconds(0);
             return snappedTime;
         }
 
-        // Optional: Hide default scrollbars if needed
-        function updateVerticalScroll() {
-            const timelineInner = document.querySelector('.vis-panel.vis-center');
-            if (timelineInner) {
-                timelineInner.style.overflowY = 'auto'; // Enable vertical scrolling if needed
-                timelineInner.style.overflowX = 'hidden'; // Hide horizontal scrollbar
-            }
-        }
-
-        // Handle form submission to save all time slots
         document.getElementById('timeslotForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const slots = items.get().map(item => {
@@ -357,6 +340,7 @@
                 if (data.success) {
                     document.getElementById('message').textContent = 'Time slots saved successfully!';
                     fetchAndDisplayExistingSlots(selectedDate);
+                    calendar.refetchEvents();
                 } else {
                     document.getElementById('message').textContent = 'Failed to save time slots.';
                 }
@@ -367,14 +351,11 @@
             });
         });
 
-        // Function to delete a time slot
         function deleteSlot(id) {
             if (typeof id === 'string' && id.startsWith('new_')) {
-                // This is an unsaved slot, just remove it from the timeline
                 items.remove(id);
                 document.getElementById('message').textContent = 'Unsaved time slot removed.';
             } else {
-                // This is a saved slot, delete from the backend
                 fetch(`/api/admin/delete_timeslot/${id}`, { method: 'DELETE' })
                     .then(response => {
                         if (!response.ok) {
@@ -386,6 +367,7 @@
                         if (data.success) {
                             items.remove(id);
                             document.getElementById('message').textContent = 'Time slot deleted successfully!';
+                            calendar.refetchEvents();
                         } else {
                             throw new Error(data.message || 'Failed to delete time slot');
                         }
@@ -397,7 +379,6 @@
             }
         }
 
-        // Add this function at the top of your script
         function debounce(func, wait) {
             let timeout;
             return function executedFunction(...args) {
@@ -410,10 +391,11 @@
             };
         }
 
-        // Initialize the timeline with the current date when the page loads
-        selectedDate = new Date();
-        datePicker.setDate(selectedDate);
-        initializeTimeline(selectedDate);
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeCalendar();
+            selectedDate = new Date();
+            initializeTimeline(selectedDate);
+        });
     </script>
 </body>
 </html>
