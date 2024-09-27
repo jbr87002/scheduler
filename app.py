@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify, render_template, send_file, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, timedelta
-from pytz import UTC
 import icalendar
 import os
 import io
@@ -11,9 +10,11 @@ from functools import wraps
 from dotenv import load_dotenv
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import func, extract
+from zoneinfo import ZoneInfo
 
 load_dotenv()  # This line loads the variables from .env
+
+london_tz = ZoneInfo("Europe/London")
 
 def admin_required(f):
     @wraps(f)
@@ -42,8 +43,8 @@ class TimeSlot(db.Model):
     end_time = db.Column(db.DateTime, nullable=False)
     is_available = db.Column(db.Boolean, default=True)
     name = db.Column(db.String(100))
-    location = db.Column(db.String(200))  # New field for location
-    is_repeated = db.Column(db.Boolean, default=False)  # New field
+    location = db.Column(db.String(200))
+    is_repeated = db.Column(db.Boolean, default=False)
 
 @app.route('/')
 def index():
@@ -62,18 +63,27 @@ def signup():
         
         if data['repeat']:
             # Create repeated slots until the end of term
-            current_date = timeslot.start_time + timedelta(weeks=1)
-            end_of_term = datetime.fromisoformat(os.getenv('END_OF_TERM'))
-            while current_date <= end_of_term:
-                repeated_slot = TimeSlot(
-                    start_time=current_date,
-                    end_time=current_date + (timeslot.end_time - timeslot.start_time),
-                    is_available=False,
-                    name=data['name'],
-                    location=timeslot.location,
-                    is_repeated=True
-                )
-                db.session.add(repeated_slot)
+            current_date = timeslot.start_time
+            end_of_term = datetime.fromisoformat(os.getenv('END_OF_TERM')).replace(tzinfo=london_tz)
+            
+            while current_date.date() <= end_of_term.date():
+                if current_date.date() != timeslot.start_time.date():  # Skip the original date
+                    repeated_start = current_date.replace(
+                        hour=timeslot.start_time.hour,
+                        minute=timeslot.start_time.minute
+                    )
+                    repeated_end = repeated_start + (timeslot.end_time - timeslot.start_time)
+                    
+                    repeated_slot = TimeSlot(
+                        start_time=repeated_start,
+                        end_time=repeated_end,
+                        is_available=False,
+                        name=data['name'],
+                        location=timeslot.location,
+                        is_repeated=True
+                    )
+                    db.session.add(repeated_slot)
+                
                 current_date += timedelta(weeks=1)
         
         db.session.commit()
@@ -102,8 +112,8 @@ def set_timeslots():
             if slot_id and slot_id.startswith('temp_'):
                 # Create new slot
                 new_slot = TimeSlot(
-                    start_time=datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC),
-                    end_time=datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC),
+                    start_time=datetime.fromisoformat(slot['start_time']).replace(tzinfo=london_tz),
+                    end_time=datetime.fromisoformat(slot['end_time']).replace(tzinfo=london_tz),
                     is_available=slot.get('is_available', True),
                     name=slot.get('name'),
                     location=slot['location']
@@ -115,8 +125,8 @@ def set_timeslots():
             elif slot_id in existing_slots:
                 # Update existing slot
                 existing_slot = existing_slots[slot_id]
-                existing_slot.start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC)
-                existing_slot.end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC)
+                existing_slot.start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=london_tz)
+                existing_slot.end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=london_tz)
                 existing_slot.is_available = slot.get('is_available', True)
                 existing_slot.name = slot.get('name')
                 existing_slot.location = slot['location']
@@ -146,6 +156,19 @@ def set_timeslots():
             "message": f"Error saving slots: {str(e)}. Original data preserved."
         }), 500
 
+@app.route('/api/get_timeslots', methods=['GET'])
+def get_timeslots():
+    timeslots = TimeSlot.query.order_by(TimeSlot.start_time).all()
+    return jsonify([{
+        'id': slot.id,
+        'start_time': slot.start_time.isoformat(),
+        'end_time': slot.end_time.isoformat(),
+        'is_available': slot.is_available,
+        'name': slot.name,
+        'location': slot.location,
+        'is_repeated': slot.is_repeated
+    } for slot in timeslots])
+
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == 'POST':
@@ -168,19 +191,6 @@ def admin():
 def admin_logout():
     session.pop('admin_logged_in', None)
     return redirect(url_for('index'))
-
-@app.route('/api/get_timeslots', methods=['GET'])
-def get_timeslots():
-    timeslots = TimeSlot.query.order_by(TimeSlot.start_time).all()
-    return jsonify([{
-        'id': slot.id,
-        'start_time': slot.start_time.replace(tzinfo=UTC).isoformat(),
-        'end_time': slot.end_time.replace(tzinfo=UTC).isoformat(),
-        'is_available': slot.is_available,
-        'name': slot.name,
-        'location': slot.location,
-        'is_repeated': slot.is_repeated
-    } for slot in timeslots])
 
 @app.route('/api/admin/delete_timeslot/<int:id>', methods=['DELETE'])
 @admin_required

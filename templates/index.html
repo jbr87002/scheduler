@@ -287,14 +287,10 @@
                 const closeBtn = modal.getElementsByClassName('close')[0];
                 const infoElement = document.getElementById('bookedSlotInfo');
 
-                const dateOptions = { day: '2-digit', month: '2-digit', year: 'numeric' };
-                const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
-
                 infoElement.innerHTML = `
                     <strong>Booked by:</strong> ${event.extendedProps.name}<br>
                     <strong>Location:</strong> ${event.extendedProps.location}<br>
-                    <strong>Time:</strong> ${event.start.toLocaleTimeString('en-GB', timeOptions)} - ${event.end.toLocaleTimeString('en-GB', timeOptions)}<br>
-                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', dateOptions)}<br>
+                    <strong>Time:</strong> ${formatDateTime(event.start)} - ${formatDateTime(event.end)}<br>
                     <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
                 `;
 
@@ -309,6 +305,15 @@
                         modal.style.display = 'none';
                     }
                 }
+            }
+
+            function formatDateTime(date) {
+                return date.toLocaleString('en-GB', { 
+                    timeZone: 'Europe/London',
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false 
+                });
             }
         });
     </script>
