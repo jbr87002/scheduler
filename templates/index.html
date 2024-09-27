@@ -291,6 +291,7 @@
                     <strong>Booked by:</strong> ${event.extendedProps.name}<br>
                     <strong>Location:</strong> ${event.extendedProps.location}<br>
                     <strong>Time:</strong> ${formatDateTime(event.start)} - ${formatDateTime(event.end)}<br>
+                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', dateOptions)}<br>
                     <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
                 `;
 
