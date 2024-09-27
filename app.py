@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template, send_file, redirect, url_for, session
+from flask_talisman import Talisman
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, timedelta
 import icalendar
@@ -25,6 +26,14 @@ def admin_required(f):
     return decorated_function
 
 app = Flask(__name__)
+Talisman(app, content_security_policy=None)
+@app.before_request
+def before_request():
+    if not request.is_secure and app.env != 'development':
+        url = request.url.replace('http://', 'https://', 1)
+        code = 301
+        return redirect(url, code=code)
+
 app.secret_key = os.getenv('SECRET_KEY')
 
 # Update database configuration
