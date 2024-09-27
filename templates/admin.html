@@ -60,7 +60,7 @@
     </style>
 </head>
 <body>
-    <h1 style="text-align: center;">Admin - Manage Time Slots</h1>
+    <h1 style="text-align: center;">Admin</h1>
     <div id="calendar"></div>
     <div id="message"></div>
 
@@ -70,7 +70,7 @@
             <span class="close">&times;</span>
             <h2>Booked Slot Information</h2>
             <p id="bookedSlotInfo"></p>
-            <button id="deleteBookedSlot">Delete Slot</button>
+            <button id="deleteBookedSlot">Delete This Slot</button>
             <button id="changeLocation">Change Location</button>
         </div>
     </div>
@@ -82,11 +82,22 @@
             var today = new Date();
             today.setHours(0, 0, 0, 0);
 
+            // Get view and date from localStorage or URL parameters
+            const storedView = localStorage.getItem('adminCalendarView');
+            const storedDate = localStorage.getItem('adminCalendarDate');
+            const urlParams = new URLSearchParams(window.location.search);
+            const viewParam = urlParams.get('view') || storedView || 'timeGridWeek';
+            const dateParam = urlParams.get('date') || storedDate || supervisionStartDate.toISOString();
+
+            console.log('Initial admin view:', viewParam);
+            console.log('Initial admin date:', dateParam);
+
             // Initialize FullCalendar
             var calendarEl = document.getElementById('calendar');
             calendar = new FullCalendar.Calendar(calendarEl, {
-                initialView: 'timeGridWeek',
-                initialDate: supervisionStartDate,
+                initialView: viewParam,
+                initialDate: new Date(dateParam),
+                locale: 'en-GB',
                 headerToolbar: {
                     left: 'prev,next today',
                     center: 'title',
@@ -153,7 +164,8 @@
                                 extendedProps: {
                                     location: slot.location,
                                     is_available: slot.is_available,
-                                    name: slot.name
+                                    name: slot.name,
+                                    isRepeated: slot.is_repeated  // Make sure this matches the property name from the server
                                 }
                             }));
                             successCallback(events);
@@ -162,9 +174,16 @@
                             console.error('Error fetching events:', error);
                             failureCallback(error);
                         });
+                },
+                datesSet: function(info) {
+                    console.log('Admin view changed:', info.view.type);
+                    console.log('Admin date changed:', info.start.toISOString());
+                    localStorage.setItem('adminCalendarView', info.view.type);
+                    localStorage.setItem('adminCalendarDate', info.start.toISOString());
                 }
             });
             calendar.render();
+            console.log('Admin calendar after render:', calendar.view.type, calendar.getDate());
 
             // Save time slots
             function saveTimeSlots() {
@@ -191,8 +210,10 @@
                 .then(data => {
                     if (data.success) {
                         document.getElementById('message').textContent = data.message || 'Time slots saved successfully!';
+                        console.log('Before refetch:', calendar.view.type, calendar.getDate());
                         calendar.removeAllEvents();
-                        calendar.refetchEvents();  // Refresh all events after saving
+                        calendar.refetchEvents();
+                        console.log('After refetch:', calendar.view.type, calendar.getDate());
                     } else {
                         document.getElementById('message').textContent = 'Failed to save time slots: ' + (data.message || '');
                         console.error('Error details:', data.message);
@@ -219,11 +240,15 @@
                 const deleteBtn = document.getElementById('deleteBookedSlot');
                 const changeLocationBtn = document.getElementById('changeLocation');
 
+                const dateOptions = { day: '2-digit', month: '2-digit', year: 'numeric' };
+                const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
+
                 infoElement.innerHTML = `
                     <strong>Booked by:</strong> ${event.extendedProps.name}<br>
                     <strong>Location:</strong> ${event.extendedProps.location}<br>
-                    <strong>Time:</strong> ${event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - ${event.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}<br>
-                    <strong>Date:</strong> ${event.start.toLocaleDateString()}
+                    <strong>Time:</strong> ${event.start.toLocaleTimeString('en-GB', timeOptions)} - ${event.end.toLocaleTimeString('en-GB', timeOptions)}<br>
+                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', dateOptions)}<br>
+                    <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
                 `;
 
                 modal.style.display = 'block';
@@ -234,7 +259,7 @@
 
                 deleteBtn.onclick = function() {
                     if (confirm('Are you sure you want to delete this booked slot?')) {
-                        event.remove();
+                        deleteBookedSlot(event.id);
                         modal.style.display = 'none';
                     }
                 }
@@ -242,8 +267,7 @@
                 changeLocationBtn.onclick = function() {
                     let newLocation = prompt('Enter new location:', event.extendedProps.location);
                     if (newLocation) {
-                        event.setExtendedProp('location', newLocation);
-                        event.setProp('title', 'Booked: ' + event.extendedProps.name + ' (' + newLocation + ')');
+                        changeSlotLocation(event.id, newLocation);
                         modal.style.display = 'none';
                     }
                 }
@@ -253,6 +277,51 @@
                         modal.style.display = 'none';
                     }
                 }
+            }
+
+            function deleteBookedSlot(slotId) {
+                fetch(`/api/admin/delete_timeslot/${slotId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Reload the calendar to get updated data from the backend
+                        calendar.refetchEvents();
+                        alert('Slot deleted successfully!');
+                    } else {
+                        alert('Failed to delete slot: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while deleting the slot.');
+                });
+            }
+
+            function changeSlotLocation(slotId, newLocation) {
+                fetch(`/api/admin/change_location/${slotId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ location: newLocation })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        let event = calendar.getEventById(slotId);
+                        event.setExtendedProp('location', newLocation);
+                        event.setProp('title', `${event.extendedProps.name} (${newLocation})`);
+                        alert('Location changed successfully!');
+                    } else {
+                        alert('Failed to change location: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while changing the location.');
+                });
             }
         });
     </script>

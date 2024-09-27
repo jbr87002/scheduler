@@ -72,10 +72,42 @@
             height: 100%;
             background-color: rgba(0,0,0,0.4);
         }
+        .header-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .header-image {
+            width: 50px;  /* Adjust this value as needed */
+            height: auto;
+        }
+        h1 {
+            margin: 0 10px;
+            white-space: nowrap;
+        }
     </style>
 </head>
 <body>
-    <h1 style="text-align: center;">Benji's supervision signups</h1>
+    <div class="header-container">
+        <div style="width: 80px;"></div>
+        <img src="{{ url_for('static', filename='mirex.png') }}" alt="Mirex" class="header-image" style="width: 160px; margin-left: -30px; margin-top: 10px; margin-bottom: -100px; display: none;">
+        <h1 style="margin-left: 30px;" id="headerTitle">Benji's supervision signups</h1>
+        <img src="{{ url_for('static', filename='artemisinin.png') }}" alt="Artemisinin" class="header-image" style="width: 170px; margin-left: 10px; margin-top: 40px; margin-bottom: -70px; display: none;">
+    </div>
+    <script>
+        function adjustForMobile() {
+            if (window.innerWidth <= 768) { // Mobile breakpoint
+                document.getElementById('headerTitle').style.fontSize = '1.5em'; // Reduced font size for mobile
+                document.querySelectorAll('.header-image').forEach(img => img.style.display = 'none');
+            } else {
+                document.getElementById('headerTitle').style.fontSize = '2em'; // Default font size for desktop
+                document.querySelectorAll('.header-image').forEach(img => img.style.display = 'inline');
+            }
+        }
+        window.addEventListener('load', adjustForMobile);
+        window.addEventListener('resize', adjustForMobile);
+    </script>
     <div id="calendar"></div>
     <div id="signupModal">
         <div class="modal-content">
@@ -108,19 +140,31 @@
             var supervisionStartDate = new Date("{{ supervision_start_date }}");
             var today = new Date();
             today.setHours(0, 0, 0, 0);
+            var calendar; // Declare calendar variable in a broader scope
+
+            // Get view and date from localStorage or URL parameters
+            const storedView = localStorage.getItem('calendarView');
+            const storedDate = localStorage.getItem('calendarDate');
+            const urlParams = new URLSearchParams(window.location.search);
+            const viewParam = urlParams.get('view') || storedView || 'timeGridWeek';
+            const dateParam = urlParams.get('date') || storedDate || supervisionStartDate.toISOString();
+
+            console.log('Initial view:', viewParam);
+            console.log('Initial date:', dateParam);
 
             fetch('/api/get_timeslots')
                 .then(response => response.json())
                 .then(data => {
                     allEvents = data;
-                    console.log("All events:", allEvents);  // Debug log
+                    console.log("All events:", allEvents);
                     initializeCalendar();
                 });
 
             function initializeCalendar() {
-                var calendar = new FullCalendar.Calendar(calendarEl, {
-                    initialView: 'timeGridWeek',
-                    initialDate: supervisionStartDate,
+                calendar = new FullCalendar.Calendar(calendarEl, {
+                    initialView: viewParam,
+                    initialDate: new Date(dateParam),
+                    locale: 'en-GB',
                     headerToolbar: {
                         left: 'prev,next today',
                         center: 'title',
@@ -131,19 +175,30 @@
                     height: 'auto',
                     allDaySlot: false,
                     selectMirror: true,
-                    events: allEvents.map(event => ({
-                        id: event.id,
-                        title: event.is_available ? event.location : `${event.name} (${event.location})`,
-                        start: new Date(event.start_time),
-                        end: new Date(event.end_time),
-                        extendedProps: {
-                            is_available: event.is_available,
-                            isRepeated: event.is_repeated,
-                            name: event.name,
-                            location: event.location
-                        },
-                        className: event.is_available ? 'available-slot' : 'booked-slot'
-                    })),
+                    events: function(fetchInfo, successCallback, failureCallback) {
+                        fetch('/api/get_timeslots')
+                            .then(response => response.json())
+                            .then(data => {
+                                const events = data.map(event => ({
+                                    id: event.id,
+                                    title: event.is_available ? event.location : `${event.name} (${event.location})`,
+                                    start: new Date(event.start_time),
+                                    end: new Date(event.end_time),
+                                    extendedProps: {
+                                        is_available: event.is_available,
+                                        isRepeated: event.is_repeated,
+                                        name: event.name,
+                                        location: event.location
+                                    },
+                                    className: event.is_available ? 'available-slot' : 'booked-slot'
+                                }));
+                                successCallback(events);
+                            })
+                            .catch(error => {
+                                console.error('Error fetching events:', error);
+                                failureCallback(error);
+                            });
+                    },
                     eventClick: function(info) {
                         if (info.event.extendedProps.is_available) {
                             signUp(info.event.id);
@@ -155,10 +210,16 @@
                         return {
                             start: today
                         };
+                    },
+                    datesSet: function(info) {
+                        console.log('View changed:', info.view.type);
+                        console.log('Date changed:', info.start.toISOString());
+                        localStorage.setItem('calendarView', info.view.type);
+                        localStorage.setItem('calendarDate', info.start.toISOString());
                     }
                 });
                 calendar.render();
-                console.log('Calendar after render:', calendar);
+                console.log('Calendar after render:', calendar.view.type, calendar.getDate());
             }
 
             function signUp(slotId) {
@@ -192,10 +253,30 @@
                     .then(data => {
                         if (data.success) {
                             alert(repeat ? 'Successfully signed up until the end of term!' : 'Successfully signed up for this slot!');
-                            location.reload(); // Reload the page to refresh the calendar
+                            
+                            modal.style.display = 'none';
+                            form.reset();
+
+                            console.log('Before refetchEvents:', calendar.getEvents().length);
+                            calendar.refetchEvents();
+                            console.log('After refetchEvents:', calendar.getEvents().length);
+                            setTimeout(() => {
+                                console.log('Delayed check - Events:', calendar.getEvents().length);
+                                console.log('Event details:', calendar.getEvents().map(e => ({
+                                    id: e.id,
+                                    title: e.title,
+                                    start: e.start,
+                                    end: e.end
+                                })));
+                            }, 1000);  // Increased timeout to 1 second
                         } else {
                             alert('Failed to sign up: ' + data.message);
+                            modal.style.display = 'none';
                         }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('An error occurred while signing up. Please try again.');
                         modal.style.display = 'none';
                     });
                 }
@@ -206,11 +287,15 @@
                 const closeBtn = modal.getElementsByClassName('close')[0];
                 const infoElement = document.getElementById('bookedSlotInfo');
 
+                const dateOptions = { day: '2-digit', month: '2-digit', year: 'numeric' };
+                const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
+
                 infoElement.innerHTML = `
                     <strong>Booked by:</strong> ${event.extendedProps.name}<br>
                     <strong>Location:</strong> ${event.extendedProps.location}<br>
-                    <strong>Time:</strong> ${event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - ${event.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}<br>
-                    <strong>Date:</strong> ${event.start.toLocaleDateString()}
+                    <strong>Time:</strong> ${event.start.toLocaleTimeString('en-GB', timeOptions)} - ${event.end.toLocaleTimeString('en-GB', timeOptions)}<br>
+                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', dateOptions)}<br>
+                    <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
                 `;
 
                 modal.style.display = 'block';

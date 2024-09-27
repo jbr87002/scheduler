@@ -11,6 +11,7 @@ from functools import wraps
 from dotenv import load_dotenv
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import func, extract
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -96,18 +97,10 @@ def set_timeslots():
         updated_or_created_ids = set()
         for slot in slots:
             slot_id = slot.get('id')
-            if slot_id and slot_id in existing_slots:
-                # Update existing slot
-                existing_slot = existing_slots[slot_id]
-                existing_slot.start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC)
-                existing_slot.end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC)
-                existing_slot.is_available = slot.get('is_available', True)
-                existing_slot.name = slot.get('name')
-                existing_slot.location = slot['location']
-                updated_or_created_ids.add(slot_id)
-                print(f"Updated slot {slot_id}")  # Debug print
-            else:
-                # Add new slot
+            
+            # Check if it's a new slot (temporary ID from frontend)
+            if slot_id and slot_id.startswith('temp_'):
+                # Create new slot
                 new_slot = TimeSlot(
                     start_time=datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC),
                     end_time=datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC),
@@ -119,6 +112,16 @@ def set_timeslots():
                 db.session.flush()  # This will assign an ID to the new slot
                 updated_or_created_ids.add(str(new_slot.id))
                 print(f"Added new slot with ID {new_slot.id}")  # Debug print
+            elif slot_id in existing_slots:
+                # Update existing slot
+                existing_slot = existing_slots[slot_id]
+                existing_slot.start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=UTC)
+                existing_slot.end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=UTC)
+                existing_slot.is_available = slot.get('is_available', True)
+                existing_slot.name = slot.get('name')
+                existing_slot.location = slot['location']
+                updated_or_created_ids.add(slot_id)
+                print(f"Updated slot {slot_id}")  # Debug print
 
         # Delete slots that were not in the received data
         for old_id in set(existing_slots.keys()) - updated_or_created_ids:
@@ -182,15 +185,24 @@ def get_timeslots():
 @app.route('/api/admin/delete_timeslot/<int:id>', methods=['DELETE'])
 @admin_required
 def delete_timeslot(id):
-    print(f"Attempting to delete timeslot with id: {id}")  # Debug print
     slot = TimeSlot.query.get(id)
     if slot:
-        print(f"Timeslot found: {slot}")  # Debug print
         db.session.delete(slot)
         db.session.commit()
-        print("Timeslot deleted successfully")  # Debug print
         return jsonify({'success': True})
-    print(f"Timeslot with id {id} not found")  # Debug print
+    return jsonify({'success': False, 'message': 'Time slot not found'})
+
+@app.route('/api/admin/change_location/<int:id>', methods=['POST'])
+@admin_required
+def change_location(id):
+    slot = TimeSlot.query.get(id)
+    if slot:
+        new_location = request.json.get('location')
+        if new_location:
+            slot.location = new_location
+            db.session.commit()
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'message': 'New location not provided'})
     return jsonify({'success': False, 'message': 'Time slot not found'})
 
 @app.route('/api/export')
