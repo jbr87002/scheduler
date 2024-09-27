@@ -29,7 +29,7 @@ app = Flask(__name__)
 Talisman(app, content_security_policy=None)
 @app.before_request
 def before_request():
-    if not request.is_secure and app.env != 'development':
+    if not request.is_secure and not app.debug:
         url = request.url.replace('http://', 'https://', 1)
         code = 301
         return redirect(url, code=code)
@@ -249,5 +249,9 @@ def init_db():
 
 if __name__ == '__main__':
     init_db()
-    port = int(os.environ.get('PORT', 5001))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    port = int(os.environ.get('PORT', 5002))
+    if os.environ.get('FLASK_ENV') == 'development':
+        debug = True
+    else:
+        debug = False
+    app.run(host='0.0.0.0', port=port, debug=debug)
