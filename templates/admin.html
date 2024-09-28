@@ -43,19 +43,20 @@
             margin: 15% auto;
             padding: 20px;
             border: 1px solid #888;
-            width: 300px;
+            width: 80%;
+            max-width: 600px;
         }
         .close {
             color: #aaa;
             float: right;
             font-size: 28px;
             font-weight: bold;
+            cursor: pointer;
         }
         .close:hover,
         .close:focus {
             color: black;
             text-decoration: none;
-            cursor: pointer;
         }
     </style>
 </head>
@@ -64,7 +65,26 @@
     <div id="calendar"></div>
     <div id="message"></div>
 
-    <!-- Add this after the calendar div -->
+    <!-- Export Calendar button -->
+    <button id="exportCalendar">Export Calendar</button>
+
+    <!-- Export Calendar Modal -->
+    <div id="exportModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Export Calendar</h2>
+            <h3>Add this calendar to your iPhone:</h3>
+            <ol>
+                <li>Go to Settings > Calendar > Accounts > Add Account > Other</li>
+                <li>Tap "Add Subscribed Calendar"</li>
+                <li>Enter this URL: <strong id="calendarUrl">{{ calendar_url }}</strong></li>
+                <li>Tap "Next" and then "Save"</li>
+            </ol>
+            <p>Your calendar will now update automatically whenever changes are made on this website.</p>
+        </div>
+    </div>
+
+    <!-- Booked Slot Modal -->
     <div id="bookedSlotModal" class="modal">
         <div class="modal-content">
             <span class="close">&times;</span>
@@ -328,6 +348,29 @@
                     console.error('Error:', error);
                     alert('An error occurred while changing the location.');
                 });
+            }
+
+            // Export Calendar Modal functionality
+            const exportButton = document.getElementById('exportCalendar');
+            const exportModal = document.getElementById('exportModal');
+            const closeExportModal = exportModal.getElementsByClassName('close')[0];
+
+            exportButton.onclick = function() {
+                exportModal.style.display = 'block';
+            }
+
+            closeExportModal.onclick = function() {
+                exportModal.style.display = 'none';
+            }
+
+            // Close modal when clicking outside of it
+            window.onclick = function(event) {
+                if (event.target == exportModal) {
+                    exportModal.style.display = 'none';
+                }
+                if (event.target == bookedSlotModal) {
+                    bookedSlotModal.style.display = 'none';
+                }
             }
         });
     </script>

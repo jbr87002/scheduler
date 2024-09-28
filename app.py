@@ -13,6 +13,9 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.exc import SQLAlchemyError
 from zoneinfo import ZoneInfo
 from sqlalchemy import func
+import uuid
+from flask import send_file, make_response
+from flask_migrate import Migrate
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -46,6 +49,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///timeslots.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 
 class TimeSlot(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -55,6 +59,17 @@ class TimeSlot(db.Model):
     name = db.Column(db.String(100))
     location = db.Column(db.String(200))
     is_repeated = db.Column(db.Boolean, default=False)
+
+class Admin(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(120), nullable=False)
+    calendar_id = db.Column(db.String(36), unique=True, nullable=False)
+
+    def __init__(self, username, password):
+        self.username = username
+        self.password_hash = generate_password_hash(password)
+        self.calendar_id = str(uuid.uuid4())
 
 @app.route('/')
 def index():
@@ -189,6 +204,12 @@ def admin_login():
         password = request.form.get('password')
         if password == os.getenv('ADMIN_PASSWORD'):
             session['admin_logged_in'] = True
+            admin = Admin.query.first()
+            if not admin:
+                admin = Admin(username='admin', password=password)
+                db.session.add(admin)
+                db.session.commit()
+            session['admin_username'] = admin.username
             return redirect(url_for('admin'))
         else:
             return render_template('admin_login.html', error='Invalid password')
@@ -198,8 +219,18 @@ def admin_login():
 def admin():
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin_login'))
+    
+    # Check if an admin user exists, if not create one
+    admin = Admin.query.first()
+    if not admin:
+        # Create a default admin user
+        admin = Admin(username='admin', password=os.getenv('ADMIN_PASSWORD'))
+        db.session.add(admin)
+        db.session.commit()
+    
     supervision_start_date = os.getenv('SUPERVISION_START_DATE')
-    return render_template('admin.html', supervision_start_date=supervision_start_date)
+    calendar_url = url_for('export_calendar', calendar_id=admin.calendar_id, _external=True)
+    return render_template('admin.html', supervision_start_date=supervision_start_date, calendar_url=calendar_url)
 
 @app.route('/admin/logout')
 def admin_logout():
@@ -250,23 +281,30 @@ def change_location(id):
         return jsonify({'success': False, 'message': 'New location not provided'})
     return jsonify({'success': False, 'message': 'Time slot not found'})
 
-@app.route('/api/export')
-def export_calendar():
+@app.route('/api/export/<calendar_id>')
+def export_calendar(calendar_id):
+    admin = Admin.query.filter_by(calendar_id=calendar_id).first()
+    if not admin:
+        return "Calendar not found", 404
+
     cal = icalendar.Calendar()
+    cal.add('prodid', '-//My Supervision Calendar//example.com//')
+    cal.add('version', '2.0')
+    cal.add('name', 'Supervision Calendar')
+    cal.add('x-wr-calname', 'Supervision Calendar')
+
     timeslots = TimeSlot.query.filter_by(is_available=False).all()
     for slot in timeslots:
         event = icalendar.Event()
         event.add('summary', f"Appointment with {slot.name}")
         event.add('dtstart', slot.start_time.replace(tzinfo=london_tz))
         event.add('dtend', slot.end_time.replace(tzinfo=london_tz))
+        event.add('location', slot.location)
         cal.add_component(event)
     
-    response = send_file(
-        io.BytesIO(cal.to_ical()),
-        mimetype='text/calendar',
-        as_attachment=True,
-        download_name='appointments.ics'
-    )
+    response = make_response(cal.to_ical())
+    response.headers["Content-Disposition"] = "attachment; filename=calendar.ics"
+    response.headers["Content-Type"] = "text/calendar"
     return response
 
 def init_db():

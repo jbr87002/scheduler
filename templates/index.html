@@ -114,6 +114,7 @@
             <span class="close">&times;</span>
             <h2>Sign up for supervision</h2>
             <form id="signupForm">
+                <p><strong>Location:</strong> <span id="supervisionLocation"></span></p>
                 <label for="name">Names:</label>
                 <input type="text" id="name" required><br><br>
                 <label>
@@ -201,7 +202,7 @@
                     },
                     eventClick: function(info) {
                         if (info.event.extendedProps.is_available) {
-                            signUp(info.event.id);
+                            signUp(info.event.id, info.event.extendedProps.location);
                         } else {
                             showBookedSlotInfo(info.event);
                         }
@@ -222,11 +223,13 @@
                 console.log('Calendar after render:', calendar.view.type, calendar.getDate());
             }
 
-            function signUp(slotId) {
+            function signUp(slotId, location) {
                 const modal = document.getElementById('signupModal');
                 const closeBtn = document.getElementsByClassName('close')[0];
                 const form = document.getElementById('signupForm');
+                const locationSpan = document.getElementById('supervisionLocation');
 
+                locationSpan.textContent = location;
                 modal.style.display = 'block';
 
                 closeBtn.onclick = function() {
