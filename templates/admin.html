@@ -97,6 +97,7 @@
             calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: viewParam,
                 initialDate: new Date(dateParam),
+                timeZone: 'Europe/London',  // Set FullCalendar to use London time
                 locale: 'en-GB',
                 headerToolbar: {
                     left: 'prev,next today',
@@ -158,14 +159,14 @@
                             const events = data.map(slot => ({
                                 id: slot.id,
                                 title: slot.is_available ? 'Available: ' + slot.location : 'Booked: ' + slot.name,
-                                start: new Date(slot.start_time),
-                                end: new Date(slot.end_time),
+                                start: slot.start_time,  // FullCalendar will interpret this as London time
+                                end: slot.end_time,      // FullCalendar will interpret this as London time
                                 className: slot.is_available ? 'available-slot' : 'booked-slot',
                                 extendedProps: {
                                     location: slot.location,
                                     is_available: slot.is_available,
                                     name: slot.name,
-                                    isRepeated: slot.is_repeated  // Make sure this matches the property name from the server
+                                    isRepeated: slot.is_repeated
                                 }
                             }));
                             successCallback(events);
@@ -246,8 +247,8 @@
                 infoElement.innerHTML = `
                     <strong>Booked by:</strong> ${event.extendedProps.name}<br>
                     <strong>Location:</strong> ${event.extendedProps.location}<br>
-                    <strong>Time:</strong> ${event.start.toLocaleTimeString('en-GB', timeOptions)} - ${event.end.toLocaleTimeString('en-GB', timeOptions)}<br>
-                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', dateOptions)}<br>
+                    <strong>Time:</strong> ${event.start.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', ...timeOptions })} - ${event.end.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', ...timeOptions })}<br>
+                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', { timeZone: 'Europe/London', ...dateOptions })}<br>
                     <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
                 `;
 
@@ -267,7 +268,11 @@
                 changeLocationBtn.onclick = function() {
                     let newLocation = prompt('Enter new location:', event.extendedProps.location);
                     if (newLocation) {
-                        changeSlotLocation(event.id, newLocation);
+                        let updateSubsequent = false;
+                        if (event.extendedProps.isRepeated) {
+                            updateSubsequent = confirm('Do you want to update this location for all subsequent repeating slots?');
+                        }
+                        changeSlotLocation(event.id, newLocation, updateSubsequent);
                         modal.style.display = 'none';
                     }
                 }
@@ -299,20 +304,21 @@
                 });
             }
 
-            function changeSlotLocation(slotId, newLocation) {
+            function changeSlotLocation(slotId, newLocation, updateSubsequent) {
                 fetch(`/api/admin/change_location/${slotId}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ location: newLocation })
+                    body: JSON.stringify({ 
+                        location: newLocation,
+                        update_subsequent: updateSubsequent
+                    })
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        let event = calendar.getEventById(slotId);
-                        event.setExtendedProp('location', newLocation);
-                        event.setProp('title', `${event.extendedProps.name} (${newLocation})`);
+                        calendar.refetchEvents();  // Reload all events to reflect changes
                         alert('Location changed successfully!');
                     } else {
                         alert('Failed to change location: ' + data.message);

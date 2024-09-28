@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.exc import SQLAlchemyError
 from zoneinfo import ZoneInfo
+from sqlalchemy import func
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -117,12 +118,16 @@ def set_timeslots():
         for slot in slots:
             slot_id = slot.get('id')
             
+            # Parse times as London time
+            start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=london_tz)
+            end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=london_tz)
+            
             # Check if it's a new slot (temporary ID from frontend)
             if slot_id and slot_id.startswith('temp_'):
                 # Create new slot
                 new_slot = TimeSlot(
-                    start_time=datetime.fromisoformat(slot['start_time']).replace(tzinfo=london_tz),
-                    end_time=datetime.fromisoformat(slot['end_time']).replace(tzinfo=london_tz),
+                    start_time=start_time,
+                    end_time=end_time,
                     is_available=slot.get('is_available', True),
                     name=slot.get('name'),
                     location=slot['location']
@@ -134,8 +139,8 @@ def set_timeslots():
             elif slot_id in existing_slots:
                 # Update existing slot
                 existing_slot = existing_slots[slot_id]
-                existing_slot.start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=london_tz)
-                existing_slot.end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=london_tz)
+                existing_slot.start_time = start_time
+                existing_slot.end_time = end_time
                 existing_slot.is_available = slot.get('is_available', True)
                 existing_slot.name = slot.get('name')
                 existing_slot.location = slot['location']
@@ -216,9 +221,30 @@ def delete_timeslot(id):
 def change_location(id):
     slot = TimeSlot.query.get(id)
     if slot:
-        new_location = request.json.get('location')
+        data = request.json
+        new_location = data.get('location')
+        update_subsequent = data.get('update_subsequent', False)
+        
         if new_location:
-            slot.location = new_location
+            if update_subsequent and slot.is_repeated:
+                # Update this slot and all subsequent repeating slots
+                subsequent_slots = TimeSlot.query.filter(
+                    TimeSlot.start_time >= slot.start_time,
+                    func.extract('dow', TimeSlot.start_time) == func.extract('dow', slot.start_time),  # Match weekday
+                    func.extract('hour', TimeSlot.start_time) == func.extract('hour', slot.start_time),  # Match start hour
+                    func.extract('minute', TimeSlot.start_time) == func.extract('minute', slot.start_time),  # Match start minute
+                    func.extract('hour', TimeSlot.end_time) == func.extract('hour', slot.end_time),  # Match end hour
+                    func.extract('minute', TimeSlot.end_time) == func.extract('minute', slot.end_time),  # Match end minute
+                    TimeSlot.is_repeated == True,
+                    TimeSlot.name == slot.name
+                ).all()
+                
+                for subsequent_slot in subsequent_slots:
+                    subsequent_slot.location = new_location
+            else:
+                # Update only this slot
+                slot.location = new_location
+            
             db.session.commit()
             return jsonify({'success': True})
         return jsonify({'success': False, 'message': 'New location not provided'})
@@ -231,8 +257,8 @@ def export_calendar():
     for slot in timeslots:
         event = icalendar.Event()
         event.add('summary', f"Appointment with {slot.name}")
-        event.add('dtstart', slot.start_time)
-        event.add('dtend', slot.end_time)
+        event.add('dtstart', slot.start_time.replace(tzinfo=london_tz))
+        event.add('dtend', slot.end_time.replace(tzinfo=london_tz))
         cal.add_component(event)
     
     response = send_file(
@@ -249,9 +275,4 @@ def init_db():
 
 if __name__ == '__main__':
     init_db()
-    port = int(os.environ.get('PORT', 5002))
-    if os.environ.get('FLASK_ENV') == 'development':
-        debug = True
-    else:
-        debug = False
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    app.run(host='127.0.0.1', port=5001, debug=True)
