@@ -129,9 +129,6 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Flask-SQLAlchemy
-migrations/
-
 # VS Code
 .vscode/
 
