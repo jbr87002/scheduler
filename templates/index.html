@@ -89,10 +89,10 @@
     </style>
 </head>
 <body>
-    <div class="header-container">
-        <div style="width: 80px;"></div>
-        <img src="{{ url_for('static', filename='mirex.png') }}" alt="Mirex" class="header-image" style="width: 160px; margin-left: -30px; margin-top: 10px; margin-bottom: -100px; display: none;">
-        <h1 style="margin-left: 30px;" id="headerTitle">Benji's supervision signups</h1>
+    <div class="header-container" style="position: relative;">
+        <a href="https://www.srcf.net/" style="position: absolute; left: 10px; top: 10px;"><img src="https://www.srcf.net/images/poweredby-light-transparent.svg" alt="Powered by the Student-Run Computing Facility (SRCF)"></a>
+        <img src="{{ url_for('static', filename='mirex.png') }}" alt="Mirex" class="header-image" style="width: 160px; margin-right: 50px; margin-top: 10px; margin-bottom: -100px; display: none;">
+        <h1 id="headerTitle">Benji's supervision signups</h1>
         <img src="{{ url_for('static', filename='artemisinin.png') }}" alt="Artemisinin" class="header-image" style="width: 170px; margin-left: 10px; margin-top: 40px; margin-bottom: -70px; display: none;">
     </div>
     <script>
