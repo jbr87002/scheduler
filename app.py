@@ -299,11 +299,15 @@ def export_calendar(calendar_id):
         event.add('dtstart', slot.start_time.replace(tzinfo=london_tz))
         event.add('dtend', slot.end_time.replace(tzinfo=london_tz))
         event.add('location', slot.location)
+        event['uid'] = str(uuid.uuid4())  # Unique identifier for each event
         cal.add_component(event)
     
     response = make_response(cal.to_ical())
+    response.headers["Content-Type"] = "text/calendar; charset=utf-8"
     response.headers["Content-Disposition"] = "attachment; filename=calendar.ics"
-    response.headers["Content-Type"] = "text/calendar"
+    # Add headers to encourage subscription
+    response.headers["X-PUBLISHED-TTL"] = "PT1H"  # Suggest updating every hour
+    response.headers["REFRESH-INTERVAL;VALUE=DURATION"] = "PT1H"
     return response
 
 def init_db():

@@ -74,12 +74,7 @@
             <span class="close">&times;</span>
             <h2>Export Calendar</h2>
             <h3>Add this calendar to your iPhone:</h3>
-            <ol>
-                <li>Go to Settings > Calendar > Accounts > Add Account > Other</li>
-                <li>Tap "Add Subscribed Calendar"</li>
-                <li>Enter this URL: <strong id="calendarUrl">{{ calendar_url }}</strong></li>
-                <li>Tap "Next" and then "Save"</li>
-            </ol>
+            <a href="{{ calendar_url }}" id="calendarUrl">Click here to add calendar</a>
             <p>Your calendar will now update automatically whenever changes are made on this website.</p>
         </div>
     </div>
@@ -380,6 +375,9 @@
                     hour12: false 
                 });
             }
+
+            // Remove the click event listener for the calendarUrl link
+            // The link will now behave as a normal link, opening in the default calendar app
         });
     </script>
 </body>
