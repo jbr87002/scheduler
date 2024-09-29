@@ -117,7 +117,6 @@
             calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: viewParam,
                 initialDate: new Date(dateParam),
-                timeZone: 'Europe/London',  // Set FullCalendar to use London time
                 locale: 'en-GB',
                 headerToolbar: {
                     left: 'prev,next today',
@@ -179,8 +178,8 @@
                             const events = data.map(slot => ({
                                 id: slot.id,
                                 title: slot.is_available ? 'Available: ' + slot.location : 'Booked: ' + slot.name,
-                                start: slot.start_time,  // FullCalendar will interpret this as London time
-                                end: slot.end_time,      // FullCalendar will interpret this as London time
+                                start: new Date(slot.start_time),  // FullCalendar will interpret this as London time
+                                end: new Date(slot.end_time),      // FullCalendar will interpret this as London time
                                 className: slot.is_available ? 'available-slot' : 'booked-slot',
                                 extendedProps: {
                                     location: slot.location,
@@ -268,7 +267,7 @@
                     <strong>Booked by:</strong> ${event.extendedProps.name}<br>
                     <strong>Location:</strong> ${event.extendedProps.location}<br>
                     <strong>Time:</strong> ${formatDateTime(event.start)} - ${formatDateTime(event.end)}<br>
-                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', { timeZone: 'Europe/London', ...dateOptions })}<br>
+                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', dateOptions)}<br>
                     <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
                 `;
 
@@ -371,6 +370,15 @@
                 if (event.target == bookedSlotModal) {
                     bookedSlotModal.style.display = 'none';
                 }
+            }
+
+            function formatDateTime(date) {
+                return date.toLocaleString('en-GB', { 
+                    timeZone: 'Europe/London',
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false 
+                });
             }
         });
     </script>
