@@ -307,7 +307,6 @@ def export_calendar(calendar_id):
     response.headers["Content-Disposition"] = "attachment; filename=calendar.ics"
     # Add headers to encourage subscription
     response.headers["X-PUBLISHED-TTL"] = "PT1H"  # Suggest updating every hour
-    response.headers["REFRESH-INTERVAL;VALUE=DURATION"] = "PT1H"
     return response
 
 def init_db():
