@@ -147,9 +147,9 @@ def set_timeslots():
         for slot in slots:
             slot_id = slot.get('id')
             
-            # Parse times as London time
-            start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=ZoneInfo("Europe/London"))
-            end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=ZoneInfo("Europe/London"))
+            # Parse times as simple datetime objects without timezone info
+            start_time = datetime.fromisoformat(slot['start_time'].replace('Z', ''))
+            end_time = datetime.fromisoformat(slot['end_time'].replace('Z', ''))
             
             # Check if it's a new slot (temporary ID from frontend)
             if slot_id and slot_id.startswith('temp_'):
@@ -193,9 +193,7 @@ def set_timeslots():
     except SQLAlchemyError as e:
         # Rollback the transaction
         db.session.rollback()
-        
         app.logger.error(f"Error saving slots: {str(e)}")
-        
         return jsonify({
             "success": False,
             "message": f"Error saving slots: {str(e)}. Original data preserved."

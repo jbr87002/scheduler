@@ -119,8 +119,8 @@
             calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: viewParam,
                 initialDate: new Date(dateParam),
-                timeZone: 'Europe/London',
                 locale: 'en-GB',
+                timeZone: 'Europe/London',
                 headerToolbar: {
                     left: 'prev,next today',
                     center: 'title',
@@ -181,8 +181,8 @@
                             const events = data.map(slot => ({
                                 id: slot.id,
                                 title: slot.is_available ? 'Available: ' + slot.location : `${slot.name} (${slot.location})`,
-                                start: new Date(slot.start_time),  // FullCalendar will interpret this as London time
-                                end: new Date(slot.end_time),      // FullCalendar will interpret this as London time
+                                start: slot.start_time,
+                                end: slot.end_time,
                                 className: slot.is_available ? 'available-slot' : 'booked-slot',
                                 extendedProps: {
                                     location: slot.location,
@@ -379,8 +379,9 @@
             }
 
             function formatDateTime(date) {
-                return date.toLocaleString('en-GB', { 
-                    timeZone: 'Europe/London',
+                // Create a new date object in the local time zone
+                const localDate = new Date(date.getTime() + date.getTimezoneOffset() * 60000);
+                return localDate.toLocaleString('en-GB', { 
                     hour: '2-digit', 
                     minute: '2-digit',
                     hour12: false 
