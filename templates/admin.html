@@ -177,7 +177,7 @@
                         .then(data => {
                             const events = data.map(slot => ({
                                 id: slot.id,
-                                title: slot.is_available ? 'Available: ' + slot.location : 'Booked: ' + slot.name,
+                                title: slot.is_available ? 'Available: ' + slot.location : `${slot.name} (${slot.location})`,
                                 start: new Date(slot.start_time),  // FullCalendar will interpret this as London time
                                 end: new Date(slot.end_time),      // FullCalendar will interpret this as London time
                                 className: slot.is_available ? 'available-slot' : 'booked-slot',
