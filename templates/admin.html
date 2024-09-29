@@ -267,7 +267,7 @@
                 infoElement.innerHTML = `
                     <strong>Booked by:</strong> ${event.extendedProps.name}<br>
                     <strong>Location:</strong> ${event.extendedProps.location}<br>
-                    <strong>Time:</strong> ${event.start.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', ...timeOptions })} - ${event.end.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', ...timeOptions })}<br>
+                    <strong>Time:</strong> ${formatDateTime(event.start)} - ${formatDateTime(event.end)}<br>
                     <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', { timeZone: 'Europe/London', ...dateOptions })}<br>
                     <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
                 `;
