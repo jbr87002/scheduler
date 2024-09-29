@@ -18,6 +18,9 @@ from flask import send_file, make_response
 import logging
 from logging.handlers import RotatingFileHandler
 import sys
+import hashlib
+from flask import Response
+import time
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -252,7 +255,8 @@ def admin():
     
     supervision_start_date = os.getenv('SUPERVISION_START_DATE')
     calendar_url = url_for('export_calendar', calendar_id=admin.calendar_id, _external=True)
-    return render_template('admin.html', supervision_start_date=supervision_start_date, calendar_url=calendar_url)
+    webcal_url = calendar_url.replace('http://', 'webcal://').replace('https://', 'webcal://')
+    return render_template('admin.html', supervision_start_date=supervision_start_date, calendar_url=webcal_url)
 
 @app.route('/admin/logout')
 def admin_logout():
@@ -327,6 +331,8 @@ def export_calendar(calendar_id):
     cal.add('version', '2.0')
     cal.add('name', 'jbr46 Supervision Calendar')
     cal.add('x-wr-calname', 'jbr46 Supervision Calendar')
+    cal.add('x-wr-caldesc', 'Supervision Calendar for jbr46')
+    cal.add('x-published-ttl', 'PT15M')  # Suggest updating every 15 minutes
 
     # Only get the booked (not available) timeslots
     timeslots = TimeSlot.query.filter_by(is_available=False).all()
@@ -337,14 +343,24 @@ def export_calendar(calendar_id):
         event.add('dtstart', slot.start_time.replace(tzinfo=london_tz))
         event.add('dtend', slot.end_time.replace(tzinfo=london_tz))
         event.add('location', slot.location)
-        event['uid'] = str(uuid.uuid4())  # Unique identifier for each event
+        event['uid'] = f"{slot.id}@jbr46.user.srcf.net"  # Unique identifier for each event
         cal.add_component(event)
     
-    response = make_response(cal.to_ical())
+    ical_data = cal.to_ical()
+    response = Response(ical_data)
     response.headers["Content-Type"] = "text/calendar; charset=utf-8"
     response.headers["Content-Disposition"] = "attachment; filename=calendar.ics"
-    # Add headers to encourage subscription
-    response.headers["X-PUBLISHED-TTL"] = "PT1H"  # Suggest updating every hour
+    
+    # Add headers to encourage subscription and frequent updates
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-PUBLISHED-TTL"] = "PT15M"
+    
+    # Add ETag header for caching
+    etag = hashlib.md5(ical_data).hexdigest()
+    response.headers["ETag"] = etag
+    
     app.logger.info("Calendar exported successfully")
     return response
 

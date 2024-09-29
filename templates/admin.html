@@ -73,9 +73,16 @@
         <div class="modal-content">
             <span class="close">&times;</span>
             <h2>Export Calendar</h2>
-            <h3>Add this calendar to your iPhone:</h3>
-            <a href="{{ calendar_url }}" id="calendarUrl">Click here to add calendar</a>
-            <p>Your calendar will now update automatically whenever changes are made on this website.</p>
+            <h3>Add this calendar to your device:</h3>
+            <p>Click the link below to automatically add the calendar to your device:</p>
+            <p><a href="{{ calendar_url }}" id="calendarUrl">Add to Calendar</a></p>
+            <p>If the above link doesn't work, follow these steps:</p>
+            <ol>
+                <li>Go to your calendar app's settings</li>
+                <li>Select "Add Calendar" or "Subscribe to Calendar"</li>
+                <li>Enter this URL: <input type="text" value="{{ calendar_url }}" readonly onclick="this.select();" style="width: 100%;"></li>
+            </ol>
+            <p>Your calendar will update automatically every 15 minutes when changes are made on this website.</p>
         </div>
     </div>
 
