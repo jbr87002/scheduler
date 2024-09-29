@@ -286,15 +286,16 @@ def export_calendar(calendar_id):
         return "Calendar not found", 404
 
     cal = icalendar.Calendar()
-    cal.add('prodid', '-//My Supervision Calendar//example.com//')
+    cal.add('prodid', '-//JBR46 Supervision Calendar//jbr46.user.srcf.net//')
     cal.add('version', '2.0')
-    cal.add('name', 'Supervision Calendar')
-    cal.add('x-wr-calname', 'Supervision Calendar')
+    cal.add('name', 'JBR46 Supervision Calendar')
+    cal.add('x-wr-calname', 'JBR46 Supervision Calendar')
 
+    # Only get the booked (not available) timeslots
     timeslots = TimeSlot.query.filter_by(is_available=False).all()
     for slot in timeslots:
         event = icalendar.Event()
-        event.add('summary', f"Appointment with {slot.name}")
+        event.add('summary', slot.name)
         event.add('dtstart', slot.start_time.replace(tzinfo=london_tz))
         event.add('dtend', slot.end_time.replace(tzinfo=london_tz))
         event.add('location', slot.location)
@@ -307,13 +308,12 @@ def export_calendar(calendar_id):
 
 def init_db():
     with app.app_context():
-        db.drop_all()  # This will drop all existing tables
         db.create_all()  # This will create all tables defined in your models
         
-        # Optionally, add any initial data here
-        admin = Admin(username='admin', password=os.getenv('ADMIN_PASSWORD'))
-        db.session.add(admin)
-        db.session.commit()
+        if not Admin.query.first():
+            admin = Admin(username='admin', password=os.getenv('ADMIN_PASSWORD'))
+            db.session.add(admin)
+            db.session.commit()
 
 # Call this function when you start your app
 if __name__ == '__main__':
