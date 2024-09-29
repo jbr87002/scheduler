@@ -15,6 +15,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func
 import uuid
 from flask import send_file, make_response
+import logging
+from logging.handlers import RotatingFileHandler
+import sys
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -71,20 +74,24 @@ class Admin(db.Model):
 
 @app.route('/')
 def index():
+    app.logger.info('Accessing index page')
     supervision_start_date = os.getenv('SUPERVISION_START_DATE')
     return render_template('index.html', supervision_start_date=supervision_start_date)
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
     data = request.json
+    app.logger.info(f"Signup attempt received: {data}")
     timeslot = TimeSlot.query.get(data['id'])
     if timeslot and timeslot.is_available:
+        app.logger.info(f"Booking slot {timeslot.id} for {data['name']}")
         # Book the current slot
         timeslot.is_available = False
         timeslot.name = data['name']
         timeslot.is_repeated = data['repeat']
         
         if data['repeat']:
+            app.logger.info(f"Creating repeated slots for {data['name']}")
             # Create repeated slots until the end of term
             current_date = timeslot.start_time
             end_of_term = datetime.fromisoformat(os.getenv('END_OF_TERM')).replace(tzinfo=london_tz)
@@ -106,18 +113,21 @@ def signup():
                         is_repeated=True
                     )
                     db.session.add(repeated_slot)
+                    app.logger.debug(f"Created repeated slot: {repeated_slot.start_time} - {repeated_slot.end_time}")
                 
                 current_date += timedelta(weeks=1)
         
         db.session.commit()
+        app.logger.info(f"Successfully booked slot(s) for {data['name']}")
         return jsonify({'success': True})
+    app.logger.warning(f"Failed to book slot {data['id']} for {data['name']}: Slot not available")
     return jsonify({'success': False, 'message': 'Time slot not available'})
 
 @app.route('/api/admin/set_timeslots', methods=['POST'])
 @admin_required
 def set_timeslots():
     slots = request.json
-    print(f"Received {len(slots)} slots")  # Debug print
+    app.logger.info(f"Received {len(slots)} slots to set")
 
     try:
         # Start a transaction
@@ -125,6 +135,7 @@ def set_timeslots():
 
         # Get all existing slots
         existing_slots = {str(slot.id): slot for slot in TimeSlot.query.all()}
+        app.logger.debug(f"Found {len(existing_slots)} existing slots")
 
         # Update or create slots
         updated_or_created_ids = set()
@@ -137,6 +148,7 @@ def set_timeslots():
             
             # Check if it's a new slot (temporary ID from frontend)
             if slot_id and slot_id.startswith('temp_'):
+                app.logger.debug(f"Creating new slot: {start_time} - {end_time}")
                 # Create new slot
                 new_slot = TimeSlot(
                     start_time=start_time,
@@ -148,8 +160,9 @@ def set_timeslots():
                 db.session.add(new_slot)
                 db.session.flush()  # This will assign an ID to the new slot
                 updated_or_created_ids.add(str(new_slot.id))
-                print(f"Added new slot with ID {new_slot.id}")  # Debug print
+                app.logger.info(f"Added new slot with ID {new_slot.id}")
             elif slot_id in existing_slots:
+                app.logger.debug(f"Updating existing slot {slot_id}")
                 # Update existing slot
                 existing_slot = existing_slots[slot_id]
                 existing_slot.start_time = start_time
@@ -158,15 +171,16 @@ def set_timeslots():
                 existing_slot.name = slot.get('name')
                 existing_slot.location = slot['location']
                 updated_or_created_ids.add(slot_id)
-                print(f"Updated slot {slot_id}")  # Debug print
+                app.logger.info(f"Updated slot {slot_id}")
 
         # Delete slots that were not in the received data
         for old_id in set(existing_slots.keys()) - updated_or_created_ids:
+            app.logger.info(f"Deleting slot {old_id}")
             db.session.delete(existing_slots[old_id])
-            print(f"Deleted slot {old_id}")  # Debug print
 
         # Commit the transaction
         db.session.commit()
+        app.logger.info(f"Successfully processed {len(slots)} slots")
         
         return jsonify({
             "success": True, 
@@ -176,7 +190,7 @@ def set_timeslots():
         # Rollback the transaction
         db.session.rollback()
         
-        print(f"Error saving slots: {str(e)}")
+        app.logger.error(f"Error saving slots: {str(e)}")
         
         return jsonify({
             "success": False,
@@ -185,7 +199,9 @@ def set_timeslots():
 
 @app.route('/api/get_timeslots', methods=['GET'])
 def get_timeslots():
+    app.logger.info("Fetching all timeslots")
     timeslots = TimeSlot.query.order_by(TimeSlot.start_time).all()
+    app.logger.debug(f"Found {len(timeslots)} timeslots")
     return jsonify([{
         'id': slot.id,
         'start_time': slot.start_time.isoformat(),
@@ -199,28 +215,35 @@ def get_timeslots():
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == 'POST':
+        app.logger.info("Admin login attempt")
         password = request.form.get('password')
         if password == os.getenv('ADMIN_PASSWORD'):
             session['admin_logged_in'] = True
             admin = Admin.query.first()
             if not admin:
+                app.logger.warning("No admin user found, creating default admin")
                 admin = Admin(username='admin', password=password)
                 db.session.add(admin)
                 db.session.commit()
             session['admin_username'] = admin.username
+            app.logger.info(f"Admin login successful: {admin.username}")
             return redirect(url_for('admin'))
         else:
+            app.logger.warning("Admin login failed: Invalid password")
             return render_template('admin_login.html', error='Invalid password')
     return render_template('admin_login.html')
 
 @app.route('/admin')
 def admin():
     if not session.get('admin_logged_in'):
+        app.logger.warning("Unauthorized access attempt to admin page")
         return redirect(url_for('admin_login'))
     
+    app.logger.info("Accessing admin page")
     # Check if an admin user exists, if not create one
     admin = Admin.query.first()
     if not admin:
+        app.logger.warning("No admin user found, creating default admin")
         # Create a default admin user
         admin = Admin(username='admin', password=os.getenv('ADMIN_PASSWORD'))
         db.session.add(admin)
@@ -232,22 +255,27 @@ def admin():
 
 @app.route('/admin/logout')
 def admin_logout():
+    app.logger.info(f"Admin logout: {session.get('admin_username')}")
     session.pop('admin_logged_in', None)
     return redirect(url_for('index'))
 
 @app.route('/api/admin/delete_timeslot/<int:id>', methods=['DELETE'])
 @admin_required
 def delete_timeslot(id):
+    app.logger.info(f"Attempting to delete timeslot {id}")
     slot = TimeSlot.query.get(id)
     if slot:
         db.session.delete(slot)
         db.session.commit()
+        app.logger.info(f"Successfully deleted timeslot {id}")
         return jsonify({'success': True})
+    app.logger.warning(f"Failed to delete timeslot {id}: Slot not found")
     return jsonify({'success': False, 'message': 'Time slot not found'})
 
 @app.route('/api/admin/change_location/<int:id>', methods=['POST'])
 @admin_required
 def change_location(id):
+    app.logger.info(f"Attempting to change location for timeslot {id}")
     slot = TimeSlot.query.get(id)
     if slot:
         data = request.json
@@ -256,6 +284,7 @@ def change_location(id):
         
         if new_location:
             if update_subsequent and slot.is_repeated:
+                app.logger.info(f"Updating location for slot {id} and subsequent repeating slots")
                 # Update this slot and all subsequent repeating slots
                 subsequent_slots = TimeSlot.query.filter(
                     TimeSlot.start_time >= slot.start_time,
@@ -270,29 +299,37 @@ def change_location(id):
                 
                 for subsequent_slot in subsequent_slots:
                     subsequent_slot.location = new_location
+                    app.logger.debug(f"Updated location for slot {subsequent_slot.id}")
             else:
+                app.logger.info(f"Updating location for slot {id}")
                 # Update only this slot
                 slot.location = new_location
             
             db.session.commit()
+            app.logger.info(f"Successfully updated location for slot {id}")
             return jsonify({'success': True})
+        app.logger.warning(f"Failed to update location for slot {id}: New location not provided")
         return jsonify({'success': False, 'message': 'New location not provided'})
+    app.logger.warning(f"Failed to update location for slot {id}: Slot not found")
     return jsonify({'success': False, 'message': 'Time slot not found'})
 
 @app.route('/api/export/<calendar_id>')
 def export_calendar(calendar_id):
+    app.logger.info(f"Exporting calendar for calendar_id: {calendar_id}")
     admin = Admin.query.filter_by(calendar_id=calendar_id).first()
     if not admin:
+        app.logger.warning(f"Calendar export failed: No admin found for calendar_id {calendar_id}")
         return "Calendar not found", 404
 
     cal = icalendar.Calendar()
-    cal.add('prodid', '-//JBR46 Supervision Calendar//jbr46.user.srcf.net//')
+    cal.add('prodid', '-//jbr46 Supervision Calendar//jbr46.user.srcf.net//')
     cal.add('version', '2.0')
-    cal.add('name', 'JBR46 Supervision Calendar')
-    cal.add('x-wr-calname', 'JBR46 Supervision Calendar')
+    cal.add('name', 'jbr46 Supervision Calendar')
+    cal.add('x-wr-calname', 'jbr46 Supervision Calendar')
 
     # Only get the booked (not available) timeslots
     timeslots = TimeSlot.query.filter_by(is_available=False).all()
+    app.logger.debug(f"Found {len(timeslots)} booked timeslots for calendar export")
     for slot in timeslots:
         event = icalendar.Event()
         event.add('summary', slot.name)
@@ -307,6 +344,7 @@ def export_calendar(calendar_id):
     response.headers["Content-Disposition"] = "attachment; filename=calendar.ics"
     # Add headers to encourage subscription
     response.headers["X-PUBLISHED-TTL"] = "PT1H"  # Suggest updating every hour
+    app.logger.info("Calendar exported successfully")
     return response
 
 def init_db():
@@ -317,6 +355,30 @@ def init_db():
             admin = Admin(username='admin', password=os.getenv('ADMIN_PASSWORD'))
             db.session.add(admin)
             db.session.commit()
+
+# Configure logging
+def configure_logging():
+    log_formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]')
+    
+    # Use an environment variable for the log file path, with a default for development
+    log_file = os.getenv('FLASK_LOG_FILE', 'flask_app.log')
+    
+    file_handler = RotatingFileHandler(log_file, maxBytes=10240, backupCount=10)
+    file_handler.setFormatter(log_formatter)
+    file_handler.setLevel(logging.INFO)
+    
+    # Also log to stdout
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(log_formatter)
+    stdout_handler.setLevel(logging.INFO)
+    
+    app.logger.addHandler(file_handler)
+    app.logger.addHandler(stdout_handler)
+    app.logger.setLevel(logging.INFO)
+    app.logger.info('Scheduler startup')
+
+# Call this function right after creating the Flask app
+configure_logging()
 
 # Call this function when you start your app
 if __name__ == '__main__':
