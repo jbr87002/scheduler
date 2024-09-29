@@ -203,6 +203,8 @@
 
             // Save time slots
             function saveTimeSlots() {
+                const saveButton = document.querySelector('button');
+                saveButton.disabled = true;
                 const events = calendar.getEvents();
                 const slots = events.map(event => ({
                     id: event.id,
@@ -235,6 +237,7 @@
                         console.error('Error details:', data.message);
                         alert('An error occurred while saving. Please try again.');
                     }
+                    saveButton.disabled = false;
                 })
                 .catch((error) => {
                     console.error('Error:', error);
@@ -376,9 +379,6 @@
                     hour12: false 
                 });
             }
-
-            // Remove the click event listener for the calendarUrl link
-            // The link will now behave as a normal link, opening in the default calendar app
         });
     </script>
 </body>

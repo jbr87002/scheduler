@@ -137,19 +137,20 @@ def set_timeslots():
         existing_slots = {str(slot.id): slot for slot in TimeSlot.query.all()}
         app.logger.debug(f"Found {len(existing_slots)} existing slots")
 
+        # Keep track of processed slots
+        processed_slots = set()
+
         # Update or create slots
-        updated_or_created_ids = set()
         for slot in slots:
             slot_id = slot.get('id')
             
             # Parse times as London time
-            start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=london_tz)
-            end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=london_tz)
+            start_time = datetime.fromisoformat(slot['start_time']).replace(tzinfo=ZoneInfo("Europe/London"))
+            end_time = datetime.fromisoformat(slot['end_time']).replace(tzinfo=ZoneInfo("Europe/London"))
             
             # Check if it's a new slot (temporary ID from frontend)
             if slot_id and slot_id.startswith('temp_'):
                 app.logger.debug(f"Creating new slot: {start_time} - {end_time}")
-                # Create new slot
                 new_slot = TimeSlot(
                     start_time=start_time,
                     end_time=end_time,
@@ -159,32 +160,32 @@ def set_timeslots():
                 )
                 db.session.add(new_slot)
                 db.session.flush()  # This will assign an ID to the new slot
-                updated_or_created_ids.add(str(new_slot.id))
+                processed_slots.add(str(new_slot.id))
                 app.logger.info(f"Added new slot with ID {new_slot.id}")
-            elif slot_id in existing_slots:
+            elif slot_id in existing_slots and slot_id not in processed_slots:
                 app.logger.debug(f"Updating existing slot {slot_id}")
-                # Update existing slot
                 existing_slot = existing_slots[slot_id]
                 existing_slot.start_time = start_time
                 existing_slot.end_time = end_time
                 existing_slot.is_available = slot.get('is_available', True)
                 existing_slot.name = slot.get('name')
                 existing_slot.location = slot['location']
-                updated_or_created_ids.add(slot_id)
+                processed_slots.add(slot_id)
                 app.logger.info(f"Updated slot {slot_id}")
 
-        # Delete slots that were not in the received data
-        for old_id in set(existing_slots.keys()) - updated_or_created_ids:
-            app.logger.info(f"Deleting slot {old_id}")
-            db.session.delete(existing_slots[old_id])
+        # Only delete slots if we received some slots and not all existing slots were updated
+        if slots:
+            for old_id in set(existing_slots.keys()) - processed_slots:
+                app.logger.info(f"Deleting slot {old_id}")
+                db.session.delete(existing_slots[old_id])
 
         # Commit the transaction
         db.session.commit()
-        app.logger.info(f"Successfully processed {len(slots)} slots")
+        app.logger.info(f"Successfully processed {len(processed_slots)} slots")
         
         return jsonify({
             "success": True, 
-            "message": f"Successfully processed {len(slots)} slots"
+            "message": f"Successfully processed {len(processed_slots)} slots"
         })
     except SQLAlchemyError as e:
         # Rollback the transaction
@@ -363,7 +364,7 @@ def configure_logging():
     # Use an environment variable for the log file path, with a default for development
     log_file = os.getenv('FLASK_LOG_FILE', 'flask_app.log')
     
-    file_handler = RotatingFileHandler(log_file, maxBytes=10240, backupCount=10)
+    file_handler = RotatingFileHandler(log_file, maxBytes=100240, backupCount=10)
     file_handler.setFormatter(log_formatter)
     file_handler.setLevel(logging.INFO)
     
