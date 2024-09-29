@@ -15,7 +15,6 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func
 import uuid
 from flask import send_file, make_response
-from flask_migrate import Migrate
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -49,7 +48,6 @@ app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///timeslots.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
-migrate = Migrate(app, db)
 
 class TimeSlot(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -63,7 +61,7 @@ class TimeSlot(db.Model):
 class Admin(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(120), nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)  # Changed from 120 to 255
     calendar_id = db.Column(db.String(36), unique=True, nullable=False)
 
     def __init__(self, username, password):
@@ -309,8 +307,15 @@ def export_calendar(calendar_id):
 
 def init_db():
     with app.app_context():
-        db.create_all()
+        db.drop_all()  # This will drop all existing tables
+        db.create_all()  # This will create all tables defined in your models
+        
+        # Optionally, add any initial data here
+        admin = Admin(username='admin', password=os.getenv('ADMIN_PASSWORD'))
+        db.session.add(admin)
+        db.session.commit()
 
+# Call this function when you start your app
 if __name__ == '__main__':
     init_db()
     app.run(host='127.0.0.1', port=5001, debug=True)
