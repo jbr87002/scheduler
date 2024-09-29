@@ -11,6 +11,7 @@
             max-width: 1400px; 
             margin: 0 auto; 
             padding: 20px; 
+            padding-bottom: 100px; /* Adjust this value based on your footer height */
         }
         #calendar {
             max-width: 1200px;
@@ -86,35 +87,45 @@
             margin: 0 10px;
             white-space: nowrap;
         }
+        .footer-container {
+            display: flex;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 20px;
+            background-color: #f8f8f8;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .footer-image {
+            width: 80px;
+            height: auto;
+        }
+        /* Add this new style for the calendar title */
+        .fc-toolbar-title {
+            font-size: 2em !important;
+        }
+        /* Media query for mobile devices */
+        @media (max-width: 768px) {
+            .fc-toolbar-title {
+                font-size: 1.5em !important;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="header-container" style="position: relative;">
-        <a href="https://www.srcf.net/" style="position: absolute; left: 10px; top: 10px;"><img src="https://www.srcf.net/images/poweredby-light-transparent.svg" alt="Powered by the Student-Run Computing Facility (SRCF)"></a>
-        <img src="{{ url_for('static', filename='mirex.png') }}" alt="Mirex" class="header-image" style="width: 160px; margin-right: 50px; margin-top: 10px; margin-bottom: -100px; display: none;">
         <h1 id="headerTitle">Benji's supervision signups</h1>
-        <img src="{{ url_for('static', filename='artemisinin.png') }}" alt="Artemisinin" class="header-image" style="width: 170px; margin-left: 10px; margin-top: 40px; margin-bottom: -70px; display: none;">
     </div>
-    <script>
-        function adjustForMobile() {
-            if (window.innerWidth <= 768) { // Mobile breakpoint
-                document.getElementById('headerTitle').style.fontSize = '1.5em'; // Reduced font size for mobile
-                document.querySelectorAll('.header-image').forEach(img => img.style.display = 'none');
-            } else {
-                document.getElementById('headerTitle').style.fontSize = '2em'; // Default font size for desktop
-                document.querySelectorAll('.header-image').forEach(img => img.style.display = 'inline');
-            }
-        }
-        window.addEventListener('load', adjustForMobile);
-        window.addEventListener('resize', adjustForMobile);
-    </script>
-    <div id="calendar"></div>
-    <div id="signupModal">
+    <div id="calendar"></div>    <div id="signupModal">
         <div class="modal-content">
             <span class="close">&times;</span>
             <h2>Sign up for supervision</h2>
             <form id="signupForm">
-                <p><strong>Location:</strong> <span id="supervisionLocation"></span></p>
+                <strong>Location:</strong> <span id="supervisionLocation"></span><br>
+                <strong>Time:</strong> <span id="supervisionTime"></span><br>
+                <strong>Date:</strong> <span id="supervisionDate"></span><br><br>
                 <label for="name">Names:</label>
                 <input type="text" id="name" required><br><br>
                 <label>
@@ -134,6 +145,36 @@
             <p id="bookedSlotInfo"></p>
         </div>
     </div>
+    <div class="footer-container" id="footerContainer">
+        <a href="https://en.wikipedia.org/wiki/Mirex"><img src="{{ url_for('static', filename='mirex.png') }}" alt="Mirex" class="footer-image" id="mirexFooter"></a>
+        <a href="https://www.srcf.net/"><img src="https://www.srcf.net/images/poweredby-light-transparent.svg" alt="Powered by the Student-Run Computing Facility (SRCF)" id="srcfFooter" style="width: 120px;"></a>
+        <a href="https://en.wikipedia.org/wiki/Artemisinin"><img src="{{ url_for('static', filename='artemisinin.png') }}" alt="Artemisinin" class="footer-image" id="artemisininFooter"></a>
+    </div>
+    <script>
+        function adjustLayout() {
+            var headerTitle = document.getElementById('headerTitle');
+            var mirexImage = document.getElementById('mirexImage');
+            var artemisininImage = document.getElementById('artemisininImage');
+            var srcfBadge = document.getElementById('srcfBadge');
+            var footerContainer = document.getElementById('footerContainer');
+
+            if (window.innerWidth <= 768) { // Mobile breakpoint
+                headerTitle.style.fontSize = '1.5em'; // Reduced font size for mobile
+                mirexImage.style.display = 'none';
+                artemisininImage.style.display = 'none';
+                srcfBadge.style.display = 'none';
+            } else {
+                headerTitle.style.fontSize = '2em'; // Default font size for desktop
+                mirexImage.style.display = 'inline';
+                artemisininImage.style.display = 'inline';
+                srcfBadge.style.display = 'inline';
+            }
+            // Footer is always displayed
+            footerContainer.style.display = 'flex';
+        }
+        window.addEventListener('load', adjustLayout);
+        window.addEventListener('resize', adjustLayout);
+    </script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             var calendarEl = document.getElementById('calendar');
@@ -202,7 +243,7 @@
                     },
                     eventClick: function(info) {
                         if (info.event.extendedProps.is_available) {
-                            signUp(info.event.id, info.event.extendedProps.location);
+                            signUp(info.event.id, info.event.extendedProps.location, info.event.start, info.event.end);
                         } else {
                             showBookedSlotInfo(info.event);
                         }
@@ -223,13 +264,17 @@
                 console.log('Calendar after render:', calendar.view.type, calendar.getDate());
             }
 
-            function signUp(slotId, location) {
+            function signUp(slotId, location, start, end) {
                 const modal = document.getElementById('signupModal');
                 const closeBtn = document.getElementsByClassName('close')[0];
                 const form = document.getElementById('signupForm');
                 const locationSpan = document.getElementById('supervisionLocation');
+                const dateSpan = document.getElementById('supervisionDate');
+                const timeSpan = document.getElementById('supervisionTime');
 
                 locationSpan.textContent = location;
+                dateSpan.textContent = start.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                timeSpan.textContent = formatDateTime(start) + ' - ' + formatDateTime(end);
                 modal.style.display = 'block';
 
                 closeBtn.onclick = function() {
