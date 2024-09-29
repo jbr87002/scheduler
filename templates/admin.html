@@ -284,10 +284,18 @@
                 }
 
                 deleteBtn.onclick = function() {
-                    if (confirm('Are you sure you want to delete this booked slot?')) {
-                        deleteBookedSlot(event.id);
-                        modal.style.display = 'none';
+                    if (event.extendedProps.isRepeated) {
+                        if (confirm('This is a repeating slot. Do you want to delete all future occurrences?')) {
+                            deleteBookedSlot(event.id, true);
+                        } else if (confirm('Do you want to delete only this occurrence?')) {
+                            deleteBookedSlot(event.id, false);
+                        }
+                    } else {
+                        if (confirm('Are you sure you want to delete this booked slot?')) {
+                            deleteBookedSlot(event.id, false);
+                        }
                     }
+                    modal.style.display = 'none';
                 }
 
                 changeLocationBtn.onclick = function() {
@@ -309,23 +317,22 @@
                 }
             }
 
-            function deleteBookedSlot(slotId) {
-                fetch(`/api/admin/delete_timeslot/${slotId}`, {
+            function deleteBookedSlot(slotId, deleteSubsequent) {
+                fetch(`/api/admin/delete_timeslot/${slotId}?delete_subsequent=${deleteSubsequent}`, {
                     method: 'DELETE'
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // Reload the calendar to get updated data from the backend
                         calendar.refetchEvents();
-                        alert('Slot deleted successfully!');
+                        alert('Slot(s) deleted successfully!');
                     } else {
-                        alert('Failed to delete slot: ' + data.message);
+                        alert('Failed to delete slot(s): ' + data.message);
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    alert('An error occurred while deleting the slot.');
+                    alert('An error occurred while deleting the slot(s).');
                 });
             }
 

@@ -268,9 +268,30 @@ def delete_timeslot(id):
     app.logger.info(f"Attempting to delete timeslot {id}")
     slot = TimeSlot.query.get(id)
     if slot:
-        db.session.delete(slot)
+        delete_subsequent = request.args.get('delete_subsequent', 'false').lower() == 'true'
+        
+        if delete_subsequent and slot.is_repeated:
+            app.logger.info(f"Deleting slot {id} and subsequent repeating slots")
+            subsequent_slots = TimeSlot.query.filter(
+                TimeSlot.start_time >= slot.start_time,
+                func.extract('dow', TimeSlot.start_time) == func.extract('dow', slot.start_time),
+                func.extract('hour', TimeSlot.start_time) == func.extract('hour', slot.start_time),
+                func.extract('minute', TimeSlot.start_time) == func.extract('minute', slot.start_time),
+                func.extract('hour', TimeSlot.end_time) == func.extract('hour', slot.end_time),
+                func.extract('minute', TimeSlot.end_time) == func.extract('minute', slot.end_time),
+                TimeSlot.is_repeated == True,
+                TimeSlot.name == slot.name
+            ).all()
+            
+            for subsequent_slot in subsequent_slots:
+                db.session.delete(subsequent_slot)
+                app.logger.debug(f"Deleted slot {subsequent_slot.id}")
+        else:
+            app.logger.info(f"Deleting single slot {id}")
+            db.session.delete(slot)
+        
         db.session.commit()
-        app.logger.info(f"Successfully deleted timeslot {id}")
+        app.logger.info(f"Successfully deleted timeslot(s)")
         return jsonify({'success': True})
     app.logger.warning(f"Failed to delete timeslot {id}: Slot not found")
     return jsonify({'success': False, 'message': 'Time slot not found'})
