@@ -21,6 +21,8 @@ import sys
 import hashlib
 from flask import Response
 import time
+from sqlalchemy.sql import text
+import re
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -67,7 +69,7 @@ class TimeSlot(db.Model):
 class Admin(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)  # Changed from 120 to 255
+    password_hash = db.Column(db.String(255), nullable=False)
     calendar_id = db.Column(db.String(36), unique=True, nullable=False)
 
     def __init__(self, username, password):
@@ -84,47 +86,83 @@ def index():
 @app.route('/api/signup', methods=['POST'])
 def signup():
     data = request.json
-    app.logger.info(f"Signup attempt received: {data}")
-    timeslot = TimeSlot.query.get(data['id'])
-    if timeslot and timeslot.is_available:
-        app.logger.info(f"Booking slot {timeslot.id} for {data['name']}")
-        # Book the current slot
-        timeslot.is_available = False
-        timeslot.name = data['name']
-        timeslot.is_repeated = data['repeat']
-        
-        if data['repeat']:
-            app.logger.info(f"Creating repeated slots for {data['name']}")
-            # Create repeated slots until the end of term
-            current_date = timeslot.start_time
-            end_of_term = datetime.fromisoformat(os.getenv('END_OF_TERM')).replace(tzinfo=london_tz)
-            
-            while current_date.date() <= end_of_term.date():
-                if current_date.date() != timeslot.start_time.date():  # Skip the original date
-                    repeated_start = current_date.replace(
-                        hour=timeslot.start_time.hour,
-                        minute=timeslot.start_time.minute
-                    )
-                    repeated_end = repeated_start + (timeslot.end_time - timeslot.start_time)
-                    
-                    repeated_slot = TimeSlot(
-                        start_time=repeated_start,
-                        end_time=repeated_end,
-                        is_available=False,
-                        name=data['name'],
-                        location=timeslot.location,
-                        is_repeated=True
-                    )
-                    db.session.add(repeated_slot)
-                    app.logger.debug(f"Created repeated slot: {repeated_slot.start_time} - {repeated_slot.end_time}")
+    app.logger.info("Signup attempt received")
+
+    # Input validation
+    if not all(key in data for key in ['id', 'name', 'repeat']):
+        return jsonify({'success': False, 'message': 'Missing required fields'}), 400
+
+    # Validate and sanitize name
+    name = data.get('name', '').strip()
+    if not name or len(name) > 100 or not re.match(r'^[a-zA-Z0-9\s\-\'()\[\]]+$', name):
+        return jsonify({'success': False, 'message': 'Invalid name'}), 400
+
+    # Validate id
+    try:
+        slot_id = int(data['id'])
+        if slot_id <= 0:
+            raise ValueError
+    except ValueError:
+        return jsonify({'success': False, 'message': 'Invalid slot ID'}), 400
+
+    # Validate repeat
+    if not isinstance(data.get('repeat'), bool):
+        return jsonify({'success': False, 'message': 'Invalid repeat value'}), 400
+
+    # Use parameterized query to prevent SQL injection
+    timeslot = db.session.execute(
+        text("SELECT * FROM time_slot WHERE id = :id AND is_available = :is_available"),
+        {"id": slot_id, "is_available": True}
+    ).fetchone()
+
+    if timeslot:
+        try:
+            # Book the current slot
+            db.session.execute(
+                text("UPDATE time_slot SET is_available = :is_available, name = :name, is_repeated = :is_repeated WHERE id = :id"),
+                {"is_available": False, "name": name, "is_repeated": data['repeat'], "id": slot_id}
+            )
+
+            if data['repeat']:
+                app.logger.info(f"Creating repeated slots for {name}")
+                # Create repeated slots until the end of term
+                current_date = timeslot.start_time
+                end_of_term = datetime.fromisoformat(os.getenv('END_OF_TERM')).replace(tzinfo=london_tz)
                 
-                current_date += timedelta(weeks=1)
-        
-        db.session.commit()
-        app.logger.info(f"Successfully booked slot(s) for {data['name']}")
-        return jsonify({'success': True})
-    app.logger.warning(f"Failed to book slot {data['id']} for {data['name']}: Slot not available")
-    return jsonify({'success': False, 'message': 'Time slot not available'})
+                while current_date.date() <= end_of_term.date():
+                    if current_date.date() != timeslot.start_time.date():  # Skip the original date
+                        repeated_start = current_date.replace(
+                            hour=timeslot.start_time.hour,
+                            minute=timeslot.start_time.minute
+                        )
+                        repeated_end = repeated_start + (timeslot.end_time - timeslot.start_time)
+                        
+                        db.session.execute(
+                            text("INSERT INTO time_slot (start_time, end_time, is_available, name, location, is_repeated) "
+                                 "VALUES (:start_time, :end_time, :is_available, :name, :location, :is_repeated)"),
+                            {
+                                "start_time": repeated_start,
+                                "end_time": repeated_end,
+                                "is_available": False,
+                                "name": name,
+                                "location": timeslot.location,
+                                "is_repeated": True
+                            }
+                        )
+                        app.logger.debug(f"Created repeated slot: {repeated_start} - {repeated_end}")
+                    
+                    current_date += timedelta(weeks=1)
+            
+            db.session.commit()
+            app.logger.info(f"Successfully booked slot(s) for {name}")
+            return jsonify({'success': True})
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({'success': False, 'message': 'An error occurred while booking the slot'}), 500
+    else:
+        app.logger.warning(f"Failed to book slot {slot_id}: Slot not available")
+        return jsonify({'success': False, 'message': 'Time slot not available or invalid'}), 400
 
 @app.route('/api/admin/set_timeslots', methods=['POST'])
 @admin_required
@@ -219,14 +257,9 @@ def admin_login():
     if request.method == 'POST':
         app.logger.info("Admin login attempt")
         password = request.form.get('password')
-        if password == os.getenv('ADMIN_PASSWORD'):
+        admin = Admin.query.first()
+        if admin and check_password_hash(admin.password_hash, password):
             session['admin_logged_in'] = True
-            admin = Admin.query.first()
-            if not admin:
-                app.logger.warning("No admin user found, creating default admin")
-                admin = Admin(username='admin', password=password)
-                db.session.add(admin)
-                db.session.commit()
             session['admin_username'] = admin.username
             app.logger.info(f"Admin login successful: {admin.username}")
             return redirect(url_for('admin'))
