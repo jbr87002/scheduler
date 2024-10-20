@@ -11,35 +11,74 @@
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
+            background-color: #f0f0f0;
+            color: #333;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
         }
         .collapsible {
-            background-color: #eee;
-            color: #444;
+            background-color: #3498db;
+            color: white;
             cursor: pointer;
             padding: 18px;
             width: 100%;
             border: none;
             text-align: left;
             outline: none;
-            font-size: 15px;
+            font-size: 16px;
+            transition: 0.4s;
+            border-radius: 5px;
+            margin-bottom: 5px;
         }
         .active, .collapsible:hover {
-            background-color: #ccc;
+            background-color: #2980b9;
+        }
+        .collapsible:after {
+            content: '\25B6';
+            float: right;
+            margin-left: 5px;
+        }
+        .active:after {
+            content: '\25BC';
         }
         .content {
             padding: 0 18px;
+            background-color: white;
             display: none;
             overflow: hidden;
-            background-color: #f1f1f1;
+        }
+        .content.show {
+            display: block;
+        }
+        .nested-collapsible {
+            background-color: #ecf0f1;
+            color: #2c3e50;
+        }
+        .nested-collapsible:after {
+            color: #2c3e50;
+        }
+        .part-ia {
+            background-color: #2ecc71;
+        }
+        .part-ib {
+            background-color: #f1c40f;
+        }
+        .part-ii {
+            background-color: #e74c3c;
+        }
+        .part-iii {
+            background-color: #c0392b;
         }
     </style>
 </head>
 <body>
     <h1>Questions Set</h1>
     
-    <button class="collapsible">Part IA</button>
+    <button class="collapsible part-ia">Part IA</button>
         <div class="content">
-            <button class="collapsible">Michaelmas</button>
+            <button class="collapsible" style="background-color: #17923a;">Michaelmas</button>
             <div class="content">
                 <h3>Week 1</h3>
                 <p>SSM handout 1, Q1-7.</p>
@@ -70,7 +109,7 @@
                 <h3>Week 8</h3>
                 <p>To be confirmed (supervision at start of Lent).</p>
             </div>
-            <button class="collapsible">Lent</button>
+            <button class="collapsible" style="background-color: #9a15b8;">Lent</button>
             <div class="content">
                 <h3>Week 1</h3>
                 <p>TBC</p>
@@ -96,7 +135,7 @@
                 <h3>Week 8</h3>
                 <p>TBC</p>
             </div>
-            <button class="collapsible">Easter</button>
+            <button class="collapsible" style="background-color: #bb1515;">Easter</button>
             <div class="content">
                 <h3>Week 1</h3>
                 <p>TBC</p>
@@ -118,45 +157,42 @@
             </div>
         </div>
 
-    <button class="collapsible">Part IB</button>
+    <button class="collapsible part-ib">Part IB (Chem B)</button>
     <div class="content">
-        <button class="collapsible">Chem B</button>
+        <button class="collapsible" style="background-color: #17923a;">Michaelmas</button>
         <div class="content">
-            <button class="collapsible">Michaelmas</button>
-            <div class="content">
-                <h3>Week 1</h3>
-                <p>AEC Q4, 5, 9, 12, 15, 19, 23, 26.</p>
+            <h3>Week 1</h3>
+            <p>AEC Q4, 5, 9, 12, 15, 19, 23, 26.</p>
 
-                <h3>Week 2</h3>
-                <p>AEC Q31, 32, 38, 39, 41, 42, 43.</p>
+            <h3>Week 2</h3>
+            <p>AEC Q31, 32, 38, 39, 41, 42, 43.</p>
 
-                <h3>Week 3</h3>
-                <p>NAPS Q1-7.</p>
+            <h3>Week 3</h3>
+            <p>NAPS Q1-7.</p>
 
-                <h3>Week 4</h3>
-                <p>NAPS Q8-14. Hint for Q12: the reaction used to turn a
-                nitro group into a carbonyl is called the Nef reaction. There
-                must be a little bit of water present for the reaction to work,
-                probably from the sulfuric acid.</p>
+            <h3>Week 4</h3>
+            <p>NAPS Q8-14. Hint for Q12: the reaction used to turn a
+            nitro group into a carbonyl is called the Nef reaction. There
+            must be a little bit of water present for the reaction to work,
+            probably from the sulfuric acid.</p>
 
-                <h3>Week 5</h3>
-                <p>ITS Q2-7.</p>
+            <h3>Week 5</h3>
+            <p>ITS Q2-7.</p>
 
-                <h3>Week 6</h3>
-                <p>ITS Q9-10, 12, 14-17.</p>
+            <h3>Week 6</h3>
+            <p>ITS Q9-10, 12, 14-17.</p>
 
-                <h3>Week 7</h3>
-                <p>ITS Q18-21; SOR Q1-4.</p>
+            <h3>Week 7</h3>
+            <p>ITS Q18-21; SOR Q1-4.</p>
 
-                <h3>Week 8</h3>
-                <p>SOR Q5-9, 13, 14.</p>
-            </div>
+            <h3>Week 8</h3>
+            <p>SOR Q5-9, 13, 14.</p>
         </div>
     </div>
 
-    <button class="collapsible">Part II</button>
+    <button class="collapsible part-ii">Part II</button>
     <div class="content">
-        <button class="collapsible">A2</button>
+        <button class="collapsible" style="background-color: #2ecc71;">A2</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>Handout 1, Q1-3.</p>
@@ -175,7 +211,7 @@
             <h3>Week 5</h3>
             <p>Handout 2, Q3(ii, iii, v), 4, 6, 7.</p>
         </div>
-        <button class="collapsible">A4</button>
+        <button class="collapsible" style="background-color: #2ecc71;">A4</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>Handout 1, Q1-3, 8-10.</p>
@@ -192,7 +228,7 @@
             <h3>Week 5</h3>
             <p>TBC</p>
         </div>
-        <button class="collapsible">B2</button>
+        <button class="collapsible" style="background-color: #f1c40f;">B2</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>TBC</p>
@@ -203,7 +239,7 @@
             <h3>Week 3</h3>
             <p>TBC</p>
         </div>
-        <button class="collapsible">B3</button>
+        <button class="collapsible" style="background-color: #f1c40f;">B3</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>TBC</p>
@@ -217,7 +253,7 @@
             <h3>Week 4</h3>
             <p>TBC</p>
         </div>
-        <button class="collapsible">B5</button>
+        <button class="collapsible" style="background-color: #f1c40f;">B5</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>TBC</p>
@@ -228,7 +264,7 @@
             <h3>Week 3</h3>
             <p>TBC</p>
         </div>
-        <button class="collapsible">C5</button>
+        <button class="collapsible" style="background-color: #e74c3c;">C5</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>TBC</p>
@@ -244,9 +280,9 @@
         </div>
     </div>
 
-    <button class="collapsible">Part III</button>
+    <button class="collapsible part-iii">Part III</button>
     <div class="content">
-        <button class="collapsible">M5</button>
+        <button class="collapsible" style="background-color: #17923a;">M5</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>Handout 1, Q1-5.</p>
@@ -260,7 +296,7 @@
             <h3>Week 4</h3>
             <p>Handout 2, Q15, 18, 19, 20, 21, 23, 26, 27. For 27, a key step in endiandric synthesis, name the reactions taking place and explain their stereochemistry.</p>
         </div>
-        <button class="collapsible">M9</button>
+        <button class="collapsible" style="background-color: #17923a;">M9</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>TBC</p>
@@ -274,7 +310,7 @@
             <h3>Week 4</h3>
             <p>TBC</p>
         </div>
-        <button class="collapsible">L1</button>
+        <button class="collapsible" style="background-color: #9a15b8;">L1</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>TBC</p>
@@ -288,7 +324,7 @@
             <h3>Week 4</h3>
             <p>TBC</p>
         </div>
-        <button class="collapsible">L8</button>
+        <button class="collapsible" style="background-color: #9a15b8;">L8</button>
         <div class="content">
             <h3>Week 1</h3>
             <p>TBC</p>
@@ -309,14 +345,24 @@
     var i;
 
     for (i = 0; i < coll.length; i++) {
-        coll[i].addEventListener("click", function() {
+        coll[i].addEventListener("click", function(e) {
             this.classList.toggle("active");
             var content = this.nextElementSibling;
-            if (content.style.display === "block") {
-                content.style.display = "none";
+            if (content.classList.contains('show')){
+                content.classList.remove('show');
             } else {
-                content.style.display = "block";
+                content.classList.add('show');
             }
+
+            // If this is a nested collapsible, update parent's visibility
+            if (this.classList.contains('nested-collapsible')) {
+                var parent = this.closest('.content');
+                if (parent) {
+                    parent.classList.add('show');
+                }
+            }
+
+            e.stopPropagation(); // Prevent event from bubbling up
         });
     }
     </script>

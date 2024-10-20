@@ -416,9 +416,9 @@ def export_calendar(calendar_id):
     app.logger.info("Calendar exported successfully")
     return response
 
-@app.route('/questions_set')
+@app.route('/questions-set')
 def questions_set():
-    return render_template('questions_set.html')
+    return render_template('questions-set.html')
 
 def init_db():
     with app.app_context():
