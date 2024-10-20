@@ -416,6 +416,10 @@ def export_calendar(calendar_id):
     app.logger.info("Calendar exported successfully")
     return response
 
+@app.route('/questions_set')
+def questions_set():
+    return render_template('questions_set.html')
+
 def init_db():
     with app.app_context():
         db.create_all()  # This will create all tables defined in your models

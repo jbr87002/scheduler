@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Questions Set</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='erlenmeyer-flask.png') }}">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .collapsible {
+            background-color: #eee;
+            color: #444;
+            cursor: pointer;
+            padding: 18px;
+            width: 100%;
+            border: none;
+            text-align: left;
+            outline: none;
+            font-size: 15px;
+        }
+        .active, .collapsible:hover {
+            background-color: #ccc;
+        }
+        .content {
+            padding: 0 18px;
+            display: none;
+            overflow: hidden;
+            background-color: #f1f1f1;
+        }
+    </style>
+</head>
+<body>
+    <h1>Questions Set</h1>
+    
+    <button class="collapsible">Part IA</button>
+        <div class="content">
+            <button class="collapsible">Michaelmas</button>
+            <div class="content">
+                <h3>Week 1</h3>
+                <p>SSM handout 1, Q1-7.</p>
+
+                <h3>Week 2</h3>
+                <p>SSM handout 1, Q8-14.</p>
+
+                <h3>Week 3</h3>
+                <p>SSM handout 1, Q15-21. For Q21, measure all of the
+                coupling constants and include brief explanations for the
+                splitting of each signal.</p>
+
+                <h3>Week 4</h3>
+                <p>SSM handout 1, Q22-23; handout 2, Q1, 3-5.</p>
+
+                <h3>Week 5</h3>
+                <p>SSM handout 2, Q7-10, 12, 14. For Q9, make sure to
+                draw a graph <i>by hand, on graph paper</i>, as this is what will
+                be expected in the exam.</p>
+
+                <h3>Week 6</h3>
+                <p>SSM handout 2, Q16-23.</p>
+
+                <h3>Week 7</h3>
+                <p>RMOC handout 1, Q1-2, 4-6. For the key features that
+                might have an effect on reactivity in Q1, just think about <i>conjugation.</i></p>
+
+                <h3>Week 8</h3>
+                <p>To be confirmed (supervision at start of Lent).</p>
+            </div>
+            <button class="collapsible">Lent</button>
+            <div class="content">
+                <h3>Week 1</h3>
+                <p>TBC</p>
+
+                <h3>Week 2</h3>
+                <p>TBC</p>
+
+                <h3>Week 3</h3>
+                <p>TBC</p>
+
+                <h3>Week 4</h3>
+                <p>TBC</p>
+
+                <h3>Week 5</h3>
+                <p>TBC</p>
+
+                <h3>Week 6</h3>
+                <p>TBC</p>
+
+                <h3>Week 7</h3>
+                <p>TBC</p>
+
+                <h3>Week 8</h3>
+                <p>TBC</p>
+            </div>
+            <button class="collapsible">Easter</button>
+            <div class="content">
+                <h3>Week 1</h3>
+                <p>TBC</p>
+
+                <h3>Week 2</h3>
+                <p>TBC</p>
+
+                <h3>Week 3</h3>
+                <p>TBC</p>
+
+                <h3>Week 4</h3>
+                <p>TBC</p>
+
+                <h3>Week 5</h3>
+                <p>TBC</p>
+
+                <h3>Week 6</h3>
+                <p>TBC</p>
+            </div>
+        </div>
+
+    <button class="collapsible">Part IB</button>
+    <div class="content">
+        <button class="collapsible">Chem B</button>
+        <div class="content">
+            <button class="collapsible">Michaelmas</button>
+            <div class="content">
+                <h3>Week 1</h3>
+                <p>AEC Q4, 5, 9, 12, 15, 19, 23, 26.</p>
+
+                <h3>Week 2</h3>
+                <p>AEC Q31, 32, 38, 39, 41, 42, 43.</p>
+
+                <h3>Week 3</h3>
+                <p>NAPS Q1-7.</p>
+
+                <h3>Week 4</h3>
+                <p>NAPS Q8-14. Hint for Q12: the reaction used to turn a
+                nitro group into a carbonyl is called the Nef reaction. There
+                must be a little bit of water present for the reaction to work,
+                probably from the sulfuric acid.</p>
+
+                <h3>Week 5</h3>
+                <p>ITS Q2-7.</p>
+
+                <h3>Week 6</h3>
+                <p>ITS Q9-10, 12, 14-17.</p>
+
+                <h3>Week 7</h3>
+                <p>ITS Q18-21; SOR Q1-4.</p>
+
+                <h3>Week 8</h3>
+                <p>SOR Q5-9, 13, 14.</p>
+            </div>
+        </div>
+    </div>
+
+    <button class="collapsible">Part II</button>
+    <div class="content">
+        <button class="collapsible">A2</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>Handout 1, Q1-3.</p>
+
+            <h3>Week 2</h3>
+            <p>Handout 1, Q4-7.</p>
+
+            <h3>Week 3</h3>
+            <p>Handout 1, Q9(i, iv, v), 10(ii, iv, vi), 11. We will probably
+            have to delay this one a week to give you time to watch enough
+            lectures.</p>
+
+            <h3>Week 4</h3>
+            <p>Handout 2, Q1, 2, 5.</p>
+
+            <h3>Week 5</h3>
+            <p>Handout 2, Q3(ii, iii, v), 4, 6, 7.</p>
+        </div>
+        <button class="collapsible">A4</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>Handout 1, Q1-3, 8-10.</p>
+
+            <h3>Week 2</h3>
+            <p>Handout 1, Q4-7, 11-12.</p>
+
+            <h3>Week 3</h3>
+            <p>TBC</p>
+
+            <h3>Week 4</h3>
+            <p>TBC</p>
+
+            <h3>Week 5</h3>
+            <p>TBC</p>
+        </div>
+        <button class="collapsible">B2</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>TBC</p>
+
+            <h3>Week 2</h3>
+            <p>TBC</p>
+
+            <h3>Week 3</h3>
+            <p>TBC</p>
+        </div>
+        <button class="collapsible">B3</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>TBC</p>
+
+            <h3>Week 2</h3>
+            <p>TBC</p>
+
+            <h3>Week 3</h3>
+            <p>TBC</p>
+
+            <h3>Week 4</h3>
+            <p>TBC</p>
+        </div>
+        <button class="collapsible">B5</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>TBC</p>
+
+            <h3>Week 2</h3>
+            <p>TBC</p>
+
+            <h3>Week 3</h3>
+            <p>TBC</p>
+        </div>
+        <button class="collapsible">C5</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>TBC</p>
+
+            <h3>Week 2</h3>
+            <p>TBC</p>
+
+            <h3>Week 3</h3>
+            <p>TBC</p>
+
+            <h3>Week 4</h3>
+            <p>TBC</p>
+        </div>
+    </div>
+
+    <button class="collapsible">Part III</button>
+    <div class="content">
+        <button class="collapsible">M5</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>Handout 1, Q1-5.</p>
+
+            <h3>Week 2</h3>
+            <p>Handout 1, Q6-10.</p>
+
+            <h3>Week 3</h3>
+            <p>Handout 2, Q2, 4, 5, 7, 8, 9, 13.</p>
+
+            <h3>Week 4</h3>
+            <p>Handout 2, Q15, 18, 19, 20, 21, 23, 26, 27. For 27, a key step in endiandric synthesis, name the reactions taking place and explain their stereochemistry.</p>
+        </div>
+        <button class="collapsible">M9</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>TBC</p>
+
+            <h3>Week 2</h3>
+            <p>TBC</p>
+
+            <h3>Week 3</h3>
+            <p>TBC</p>
+
+            <h3>Week 4</h3>
+            <p>TBC</p>
+        </div>
+        <button class="collapsible">L1</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>TBC</p>
+
+            <h3>Week 2</h3>
+            <p>TBC</p>
+
+            <h3>Week 3</h3>
+            <p>TBC</p>
+
+            <h3>Week 4</h3>
+            <p>TBC</p>
+        </div>
+        <button class="collapsible">L8</button>
+        <div class="content">
+            <h3>Week 1</h3>
+            <p>TBC</p>
+
+            <h3>Week 2</h3>
+            <p>TBC</p>
+
+            <h3>Week 3</h3>
+            <p>TBC</p>
+
+            <h3>Week 4</h3>
+            <p>TBC</p>
+        </div>
+    </div>
+
+    <script>
+    var coll = document.getElementsByClassName("collapsible");
+    var i;
+
+    for (i = 0; i < coll.length; i++) {
+        coll[i].addEventListener("click", function() {
+            this.classList.toggle("active");
+            var content = this.nextElementSibling;
+            if (content.style.display === "block") {
+                content.style.display = "none";
+            } else {
+                content.style.display = "block";
+            }
+        });
+    }
+    </script>
+</body>
+</html>
