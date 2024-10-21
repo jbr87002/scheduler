@@ -420,6 +420,10 @@ def export_calendar(calendar_id):
 def questions_set():
     return render_template('questions-set.html')
 
+@app.route('/faq')
+def faq():
+    return render_template('faq.html')
+
 def init_db():
     with app.app_context():
         db.create_all()  # This will create all tables defined in your models
