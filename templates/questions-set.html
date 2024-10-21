@@ -6,6 +6,9 @@
     <title>Questions Set</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='erlenmeyer-flask.png') }}">
     <style>
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
         body {
             font-family: Arial, sans-serif;
             max-width: 800px;
@@ -27,6 +30,7 @@
             border: none;
             text-align: left;
             outline: none;
+            transition: background-color 0.3s ease;
             font-size: 16px;
             border-radius: 5px;
             margin-bottom: 5px;
@@ -40,13 +44,13 @@
             content: '\25BC';
         }
         .content {
-            padding: 0 18px;
-            background-color: white;
-            display: none;
-            overflow: hidden;
-        }
-        .content.show {
-            display: block;
+        padding: 0 18px;
+        background-color: white;
+        max-height: 0;
+        overflow: auto;
+        transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+        padding-top: 0;
+        padding-bottom: 0;
         }
         .nested-collapsible {
             background-color: #ecf0f1;
@@ -338,27 +342,19 @@
 
     <script>
     var coll = document.getElementsByClassName("collapsible");
-    var i;
-
-    for (i = 0; i < coll.length; i++) {
+    
+    for (var i = 0; i < coll.length; i++) {
         coll[i].addEventListener("click", function(e) {
             this.classList.toggle("active");
             var content = this.nextElementSibling;
-            if (content.classList.contains('show')){
+            
+            if (content.classList.contains('show')) {
                 content.classList.remove('show');
+                content.style.maxHeight = null;
             } else {
                 content.classList.add('show');
+                content.style.maxHeight = 600 + "px";
             }
-
-            // If this is a nested collapsible, update parent's visibility
-            if (this.classList.contains('nested-collapsible')) {
-                var parent = this.closest('.content');
-                if (parent) {
-                    parent.classList.add('show');
-                }
-            }
-
-            e.stopPropagation(); // Prevent event from bubbling up
         });
     }
     </script>
