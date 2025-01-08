@@ -23,6 +23,9 @@ from flask import Response
 import time
 from sqlalchemy.sql import text
 import re
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -35,6 +38,29 @@ def admin_required(f):
             return jsonify({'error': 'Unauthorized'}), 401
         return f(*args, **kwargs)
     return decorated_function
+
+def send_confirmation_email(student_name, slot_start, slot_end, location):
+    """Send confirmation email for supervision signup"""
+    sender = 'jbr46@cam.ac.uk'
+    recipient = 'jbr46@cam.ac.uk'
+    msg = MIMEMultipart()
+    msg['From'] = sender
+    msg['To'] = recipient
+    msg['Subject'] = f'New supervision signup: {student_name}'
+    body = f"""New supervision signup received:
+Students: {student_name}
+Time: {slot_start.strftime('%A, %d %B %Y %I:%M %p')} - {slot_end.strftime('%I:%M %p')}
+Location: {location}
+"""
+    msg.attach(MIMEText(body, 'plain'))
+    try:
+        with smtplib.SMTP('smtp.cam.ac.uk', 25) as server:
+            server.send_message(msg)
+            app.logger.info(f"Email sent to {recipient} for new signup")
+            return True
+    except Exception as e:
+        app.logger.error(f"Error sending email: {str(e)}")
+        return False
 
 app = Flask(__name__)
 Talisman(app, content_security_policy=None)
@@ -155,6 +181,15 @@ def signup():
             
             db.session.commit()
             app.logger.info(f"Successfully booked slot(s) for {name}")
+
+            # send confirmation email
+            send_confirmation_email(
+                student_name=name,
+                slot_start=timeslot.start_time,
+                slot_end=timeslot.end_time,
+                location=timeslot.location
+            )
+
             return jsonify({'success': True})
         except SQLAlchemyError as e:
             db.session.rollback()
