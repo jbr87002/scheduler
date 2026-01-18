@@ -129,6 +129,7 @@
                     right: 'dayGridMonth,timeGridWeek'
                 },
                 slotDuration: '00:30:00',
+                snapDuration: '00:30:00',
                 slotMinTime: '08:00:00',
                 slotMaxTime: '20:00:00',
                 allDaySlot: false,
@@ -144,25 +145,36 @@
                 },
                 select: function(info) {
                     let location = prompt('Enter location for this time slot:');
-                    if (location) {
-                        let tempId = 'temp_' + new Date().getTime();
-                        calendar.addEvent({
-                            id: tempId,
-                            title: 'Available: ' + location,
-                            start: info.start,
-                            end: info.end,
-                            className: 'available-slot',
-                            extendedProps: {
-                                location: location,
-                                is_available: true
-                            }
-                        });
+                    if (!location) {
+                        calendar.unselect();
+                        return;
                     }
+
+                    const snappedStart = snapToInterval(info.start, 30);
+                    const selectedMinutes = Math.round((info.end - info.start) / 60000);
+                    const snappedDuration = Math.max(30, Math.ceil(selectedMinutes / 30) * 30);
+                    const snappedEnd = new Date(snappedStart.getTime() + snappedDuration * 60000);
+                    let tempId = 'temp_' + new Date().getTime();
+                    calendar.addEvent({
+                        id: tempId,
+                        title: 'Available: ' + location,
+                        start: snappedStart,
+                        end: snappedEnd,
+                        className: 'available-slot',
+                        extendedProps: {
+                            location: location,
+                            is_available: true
+                        }
+                    });
                     calendar.unselect();
                 },
                 eventClick: function(info) {
                     if (info.event.extendedProps.is_available) {
-                        info.event.remove();
+                        if (confirm('Edit the time for this slot?')) {
+                            editSlotTime(info.event);
+                        } else if (confirm('Delete this slot?')) {
+                            info.event.remove();
+                        }
                     } else {
                         showBookedSlotInfo(info.event);
                     }
@@ -260,6 +272,61 @@
             saveButton.textContent = 'Save Time Slots';
             saveButton.onclick = saveTimeSlots;
             document.body.insertBefore(saveButton, document.getElementById('message'));
+
+            function snapToInterval(date, intervalMinutes) {
+                const snapped = new Date(date);
+                const totalMinutes = snapped.getHours() * 60 + snapped.getMinutes();
+                const snappedTotal = Math.round(totalMinutes / intervalMinutes) * intervalMinutes;
+                snapped.setHours(Math.floor(snappedTotal / 60));
+                snapped.setMinutes(snappedTotal % 60, 0, 0);
+                return snapped;
+            }
+
+            function formatTime(date) {
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${hours}:${minutes}`;
+            }
+
+            function parseTimeOnDate(date, timeString) {
+                const match = timeString.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+                if (!match) {
+                    return null;
+                }
+                const hours = Number(match[1]);
+                const minutes = Number(match[2]);
+                const updated = new Date(date);
+                updated.setHours(hours, minutes, 0, 0);
+                return updated;
+            }
+
+            function editSlotTime(event) {
+                const defaultEnd = event.end ? new Date(event.end) : new Date(event.start.getTime() + 30 * 60000);
+                const startInput = prompt('New start time (HH:MM, 24-hour, 5-minute increments):', formatTime(event.start));
+                if (startInput === null) {
+                    return;
+                }
+                const endInput = prompt('New end time (HH:MM, 24-hour, 5-minute increments):', formatTime(defaultEnd));
+                if (endInput === null) {
+                    return;
+                }
+                const newStart = parseTimeOnDate(event.start, startInput.trim());
+                const newEnd = parseTimeOnDate(event.start, endInput.trim());
+                if (!newStart || !newEnd) {
+                    alert('Please enter times as HH:MM in 24-hour format.');
+                    return;
+                }
+                if (newStart.getMinutes() % 5 !== 0 || newEnd.getMinutes() % 5 !== 0) {
+                    alert('Please use 5-minute increments.');
+                    return;
+                }
+                if (newEnd <= newStart) {
+                    alert('End time must be after start time.');
+                    return;
+                }
+                event.setStart(newStart);
+                event.setEnd(newEnd);
+            }
 
             function showBookedSlotInfo(event) {
                 const modal = document.getElementById('bookedSlotModal');
