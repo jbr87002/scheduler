@@ -60,6 +60,59 @@
             color: black;
             text-decoration: none;
         }
+        #message {
+            margin: 10px auto;
+            max-width: 1200px;
+            padding: 8px 12px;
+        }
+        .status-message {
+            margin-top: 12px;
+            font-size: 0.95em;
+        }
+        .status-message.success {
+            color: #1b4332;
+        }
+        .status-message.error {
+            color: #9d0208;
+        }
+        .status-message.info {
+            color: #1f3b73;
+        }
+        .slot-meta {
+            color: #555;
+            margin: 0 0 8px;
+        }
+        .form-row {
+            display: flex;
+            gap: 12px;
+        }
+        .form-row > div {
+            flex: 1;
+        }
+        .modal-content label {
+            display: block;
+            margin-top: 12px;
+            font-weight: 600;
+        }
+        .modal-content input[type="text"],
+        .modal-content input[type="time"] {
+            width: 100%;
+            padding: 6px;
+            margin-top: 4px;
+            box-sizing: border-box;
+        }
+        .modal-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .modal-actions button {
+            padding: 6px 10px;
+        }
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -88,14 +141,34 @@
         </div>
     </div>
 
-    <!-- Booked Slot Modal -->
-    <div id="bookedSlotModal" class="modal">
+    <!-- Slot Actions Modal -->
+    <div id="slotModal" class="modal">
         <div class="modal-content">
-            <span class="close">&times;</span>
-            <h2>Booked Slot Information</h2>
-            <p id="bookedSlotInfo"></p>
-            <button id="deleteBookedSlot">Delete This Slot</button>
-            <button id="changeLocation">Change Location</button>
+            <span class="close" id="slotModalClose">&times;</span>
+            <h2 id="slotModalTitle">Slot</h2>
+            <p id="slotModalMeta" class="slot-meta"></p>
+            <form id="slotEditForm">
+                <label for="slotLocationInput">Location</label>
+                <input type="text" id="slotLocationInput" autocomplete="off">
+                <div class="form-row">
+                    <div>
+                        <label for="slotStartInput">Start time</label>
+                        <input type="time" id="slotStartInput" step="1800">
+                    </div>
+                    <div>
+                        <label for="slotEndInput">End time</label>
+                        <input type="time" id="slotEndInput" step="1800">
+                    </div>
+                </div>
+            </form>
+            <div id="slotModalMessage" class="status-message"></div>
+            <div class="modal-actions">
+                <button id="slotPrimaryAction" type="button">Save</button>
+                <button id="slotDeleteAction" type="button">Delete slot</button>
+                <button id="slotDeleteRepeatsAction" type="button" class="hidden">Delete future repeats</button>
+                <button id="slotUpdateLocationRepeatsAction" type="button" class="hidden">Update location for future repeats</button>
+                <button id="slotCancelAction" type="button">Close</button>
+            </div>
         </div>
     </div>
 
@@ -105,6 +178,24 @@
             var supervisionStartDate = new Date("{{ supervision_start_date }}");
             var today = new Date();
             today.setHours(0, 0, 0, 0);
+            const statusMessage = document.getElementById('message');
+            const slotModal = document.getElementById('slotModal');
+            const slotModalClose = document.getElementById('slotModalClose');
+            const slotModalTitle = document.getElementById('slotModalTitle');
+            const slotModalMeta = document.getElementById('slotModalMeta');
+            const slotModalMessage = document.getElementById('slotModalMessage');
+            const slotLocationInput = document.getElementById('slotLocationInput');
+            const slotStartInput = document.getElementById('slotStartInput');
+            const slotEndInput = document.getElementById('slotEndInput');
+            const slotPrimaryAction = document.getElementById('slotPrimaryAction');
+            const slotDeleteAction = document.getElementById('slotDeleteAction');
+            const slotDeleteRepeatsAction = document.getElementById('slotDeleteRepeatsAction');
+            const slotUpdateLocationRepeatsAction = document.getElementById('slotUpdateLocationRepeatsAction');
+            const slotCancelAction = document.getElementById('slotCancelAction');
+
+            let activeEvent = null;
+            let activeMode = 'create';
+            let activeCreateStart = null;
 
             // Get view and date from localStorage or URL parameters
             const storedView = localStorage.getItem('adminCalendarView');
@@ -144,48 +235,25 @@
                     };
                 },
                 select: function(info) {
-                    let location = prompt('Enter location for this time slot:');
-                    if (!location) {
-                        calendar.unselect();
-                        return;
-                    }
-
                     const snappedStart = snapToInterval(info.start, 30);
                     const selectedMinutes = Math.round((info.end - info.start) / 60000);
                     const snappedDuration = Math.max(30, Math.ceil(selectedMinutes / 30) * 30);
                     const snappedEnd = new Date(snappedStart.getTime() + snappedDuration * 60000);
-                    let tempId = 'temp_' + new Date().getTime();
-                    calendar.addEvent({
-                        id: tempId,
-                        title: 'Available: ' + location,
-                        start: snappedStart,
-                        end: snappedEnd,
-                        className: 'available-slot',
-                        extendedProps: {
-                            location: location,
-                            is_available: true
-                        }
-                    });
+                    openSlotModal({ mode: 'create', start: snappedStart, end: snappedEnd });
                     calendar.unselect();
                 },
                 eventClick: function(info) {
-                    if (info.event.extendedProps.is_available) {
-                        if (confirm('Edit the time for this slot?')) {
-                            editSlotTime(info.event);
-                        } else if (confirm('Delete this slot?')) {
-                            info.event.remove();
-                        }
-                    } else {
-                        showBookedSlotInfo(info.event);
-                    }
+                    openSlotModal({ mode: 'edit', event: info.event });
                 },
                 eventDrop: function(info) {
                     // Handle event drag and drop
                     console.log('Event moved:', info.event);
+                    setStatusMessage('Slot moved. Remember to save.', 'info');
                 },
                 eventResize: function(info) {
                     // Handle event resize
                     console.log('Event resized:', info.event);
+                    setStatusMessage('Slot resized. Remember to save.', 'info');
                 },
                 events: function(fetchInfo, successCallback, failureCallback) {
                     // Fetch events for the calendar
@@ -224,7 +292,6 @@
 
             // Save time slots
             function saveTimeSlots() {
-                const saveButton = document.querySelector('button');
                 saveButton.disabled = true;
                 const events = calendar.getEvents();
                 const slots = events.map(event => ({
@@ -248,22 +315,21 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        document.getElementById('message').textContent = data.message || 'Time slots saved successfully!';
+                        setStatusMessage(data.message || 'Time slots saved successfully!', 'success');
                         console.log('Before refetch:', calendar.view.type, calendar.getDate());
                         calendar.removeAllEvents();
                         calendar.refetchEvents();
                         console.log('After refetch:', calendar.view.type, calendar.getDate());
                     } else {
-                        document.getElementById('message').textContent = 'Failed to save time slots: ' + (data.message || '');
+                        setStatusMessage('Failed to save time slots: ' + (data.message || ''), 'error');
                         console.error('Error details:', data.message);
-                        alert('An error occurred while saving. Please try again.');
                     }
                     saveButton.disabled = false;
                 })
                 .catch((error) => {
                     console.error('Error:', error);
-                    document.getElementById('message').textContent = 'An error occurred: ' + error.message;
-                    alert('An unexpected error occurred. Please refresh the page and try again.');
+                    setStatusMessage('An unexpected error occurred: ' + error.message, 'error');
+                    saveButton.disabled = false;
                 });
             }
 
@@ -272,6 +338,29 @@
             saveButton.textContent = 'Save Time Slots';
             saveButton.onclick = saveTimeSlots;
             document.body.insertBefore(saveButton, document.getElementById('message'));
+
+            function setStatusMessage(text, type) {
+                statusMessage.textContent = text;
+                statusMessage.className = 'status-message' + (type ? ` ${type}` : '');
+            }
+
+            function setModalMessage(text, type) {
+                slotModalMessage.textContent = text;
+                slotModalMessage.className = 'status-message' + (type ? ` ${type}` : '');
+            }
+
+            function setTimeInputStep(minutes) {
+                const stepValue = String(minutes * 60);
+                slotStartInput.step = stepValue;
+                slotEndInput.step = stepValue;
+            }
+
+            function formatDate(date) {
+                if (!date) {
+                    return '';
+                }
+                return date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            }
 
             function snapToInterval(date, intervalMinutes) {
                 const snapped = new Date(date);
@@ -289,6 +378,9 @@
             }
 
             function parseTimeOnDate(date, timeString) {
+                if (!date) {
+                    return null;
+                }
                 const match = timeString.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
                 if (!match) {
                     return null;
@@ -300,91 +392,147 @@
                 return updated;
             }
 
-            function editSlotTime(event) {
-                const defaultEnd = event.end ? new Date(event.end) : new Date(event.start.getTime() + 30 * 60000);
-                const startInput = prompt('New start time (HH:MM, 24-hour, 5-minute increments):', formatTime(event.start));
-                if (startInput === null) {
-                    return;
+            function openSlotModal({ mode, event, start, end }) {
+                activeMode = mode;
+                activeEvent = event || null;
+                activeCreateStart = start || null;
+                setModalMessage('', '');
+
+                const isBooked = event ? !event.extendedProps.is_available : false;
+                const isRepeated = event ? !!event.extendedProps.isRepeated : false;
+                const baseDate = event ? event.start : start;
+                const effectiveEnd = event ? (event.end || new Date(event.start.getTime() + 30 * 60000)) : end;
+
+                slotModalTitle.textContent = mode === 'create'
+                    ? 'Create available slot'
+                    : (isBooked ? 'Edit booked slot' : 'Edit available slot');
+
+                if (baseDate) {
+                    slotModalMeta.textContent = formatDate(baseDate);
+                    if (isBooked) {
+                        const bookedBy = event.extendedProps.name || 'Student';
+                        slotModalMeta.textContent += ` - Booked by ${bookedBy}`;
+                    }
+                } else {
+                    slotModalMeta.textContent = '';
                 }
-                const endInput = prompt('New end time (HH:MM, 24-hour, 5-minute increments):', formatTime(defaultEnd));
-                if (endInput === null) {
-                    return;
-                }
-                const newStart = parseTimeOnDate(event.start, startInput.trim());
-                const newEnd = parseTimeOnDate(event.start, endInput.trim());
-                if (!newStart || !newEnd) {
-                    alert('Please enter times as HH:MM in 24-hour format.');
-                    return;
-                }
-                if (newStart.getMinutes() % 5 !== 0 || newEnd.getMinutes() % 5 !== 0) {
-                    alert('Please use 5-minute increments.');
-                    return;
-                }
-                if (newEnd <= newStart) {
-                    alert('End time must be after start time.');
-                    return;
-                }
-                event.setStart(newStart);
-                event.setEnd(newEnd);
+
+                slotLocationInput.value = mode === 'create' ? '' : (event.extendedProps.location || '');
+                slotStartInput.value = baseDate ? formatTime(baseDate) : '';
+                slotEndInput.value = effectiveEnd ? formatTime(effectiveEnd) : '';
+
+                setTimeInputStep(mode === 'create' ? 30 : 5);
+
+                slotPrimaryAction.textContent = mode === 'create' ? 'Create slot' : 'Save changes';
+                slotDeleteAction.classList.toggle('hidden', mode === 'create');
+                slotDeleteRepeatsAction.classList.toggle('hidden', !(mode === 'edit' && isBooked && isRepeated));
+                slotUpdateLocationRepeatsAction.classList.toggle('hidden', !(mode === 'edit' && isBooked && isRepeated));
+
+                slotModal.style.display = 'block';
             }
 
-            function showBookedSlotInfo(event) {
-                const modal = document.getElementById('bookedSlotModal');
-                const closeBtn = modal.getElementsByClassName('close')[0];
-                const infoElement = document.getElementById('bookedSlotInfo');
-                const deleteBtn = document.getElementById('deleteBookedSlot');
-                const changeLocationBtn = document.getElementById('changeLocation');
+            function closeSlotModal() {
+                slotModal.style.display = 'none';
+                activeEvent = null;
+                activeCreateStart = null;
+            }
 
-                const dateOptions = { day: '2-digit', month: '2-digit', year: 'numeric' };
-                const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
-
-                infoElement.innerHTML = `
-                    <strong>Booked by:</strong> ${event.extendedProps.name}<br>
-                    <strong>Location:</strong> ${event.extendedProps.location}<br>
-                    <strong>Time:</strong> ${formatDateTime(event.start)} - ${formatDateTime(event.end)}<br>
-                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', dateOptions)}<br>
-                    <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
-                `;
-
-                modal.style.display = 'block';
-
-                closeBtn.onclick = function() {
-                    modal.style.display = 'none';
+            function handleSlotPrimaryAction() {
+                const location = slotLocationInput.value.trim();
+                if (!location) {
+                    setModalMessage('Location is required.', 'error');
+                    return;
                 }
 
-                deleteBtn.onclick = function() {
-                    if (event.extendedProps.isRepeated) {
-                        if (confirm('This is a repeating slot. Do you want to delete all future occurrences?')) {
-                            deleteBookedSlot(event.id, true);
-                        } else if (confirm('Do you want to delete only this occurrence?')) {
-                            deleteBookedSlot(event.id, false);
+                const baseDate = activeEvent ? activeEvent.start : activeCreateStart;
+                const startValue = parseTimeOnDate(baseDate, slotStartInput.value);
+                const endValue = parseTimeOnDate(baseDate, slotEndInput.value);
+                if (!startValue || !endValue) {
+                    setModalMessage('Please enter times as HH:MM in 24-hour format.', 'error');
+                    return;
+                }
+
+                const stepMinutes = activeMode === 'create' ? 30 : 5;
+                if (startValue.getMinutes() % stepMinutes !== 0 || endValue.getMinutes() % stepMinutes !== 0) {
+                    const stepLabel = stepMinutes === 30 ? '30' : '5';
+                    setModalMessage(`Please use ${stepLabel}-minute increments.`, 'error');
+                    return;
+                }
+
+                if (endValue <= startValue) {
+                    setModalMessage('End time must be after start time.', 'error');
+                    return;
+                }
+
+                if (activeMode === 'create') {
+                    let tempId = 'temp_' + new Date().getTime();
+                    calendar.addEvent({
+                        id: tempId,
+                        title: 'Available: ' + location,
+                        start: startValue,
+                        end: endValue,
+                        className: 'available-slot',
+                        extendedProps: {
+                            location: location,
+                            is_available: true
                         }
+                    });
+                    setStatusMessage('Slot created. Remember to save.', 'info');
+                } else if (activeEvent) {
+                    activeEvent.setStart(startValue);
+                    activeEvent.setEnd(endValue);
+                    activeEvent.setExtendedProp('location', location);
+                    if (activeEvent.extendedProps.is_available) {
+                        activeEvent.setProp('title', 'Available: ' + location);
                     } else {
-                        if (confirm('Are you sure you want to delete this booked slot?')) {
-                            deleteBookedSlot(event.id, false);
-                        }
+                        const name = activeEvent.extendedProps.name || 'Booked';
+                        activeEvent.setProp('title', `${name} (${location})`);
                     }
-                    modal.style.display = 'none';
+                    setStatusMessage('Slot updated. Remember to save.', 'info');
                 }
 
-                changeLocationBtn.onclick = function() {
-                    let newLocation = prompt('Enter new location:', event.extendedProps.location);
-                    if (newLocation) {
-                        let updateSubsequent = false;
-                        if (event.extendedProps.isRepeated) {
-                            updateSubsequent = confirm('Do you want to update this location for all subsequent repeating slots?');
-                        }
-                        changeSlotLocation(event.id, newLocation, updateSubsequent);
-                        modal.style.display = 'none';
-                    }
-                }
-
-                window.onclick = function(e) {
-                    if (e.target == modal) {
-                        modal.style.display = 'none';
-                    }
-                }
+                closeSlotModal();
             }
+
+            function handleSlotDelete(deleteSubsequent) {
+                if (!activeEvent) {
+                    closeSlotModal();
+                    return;
+                }
+                if (activeEvent.extendedProps.is_available) {
+                    activeEvent.remove();
+                    setStatusMessage('Slot removed. Remember to save.', 'info');
+                    closeSlotModal();
+                    return;
+                }
+                deleteBookedSlot(activeEvent.id, deleteSubsequent);
+                closeSlotModal();
+            }
+
+            function handleUpdateLocationRepeats() {
+                if (!activeEvent) {
+                    closeSlotModal();
+                    return;
+                }
+                const location = slotLocationInput.value.trim();
+                if (!location) {
+                    setModalMessage('Location is required.', 'error');
+                    return;
+                }
+                changeSlotLocation(activeEvent.id, location, true);
+                closeSlotModal();
+            }
+
+            slotPrimaryAction.onclick = handleSlotPrimaryAction;
+            slotDeleteAction.onclick = function() {
+                handleSlotDelete(false);
+            };
+            slotDeleteRepeatsAction.onclick = function() {
+                handleSlotDelete(true);
+            };
+            slotUpdateLocationRepeatsAction.onclick = handleUpdateLocationRepeats;
+            slotModalClose.onclick = closeSlotModal;
+            slotCancelAction.onclick = closeSlotModal;
 
             function deleteBookedSlot(slotId, deleteSubsequent) {
                 fetch(`/api/admin/delete_timeslot/${slotId}?delete_subsequent=${deleteSubsequent}`, {
@@ -393,15 +541,22 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        calendar.refetchEvents();
-                        alert('Slot(s) deleted successfully!');
+                        if (deleteSubsequent) {
+                            calendar.refetchEvents();
+                        } else {
+                            const event = calendar.getEventById(String(slotId));
+                            if (event) {
+                                event.remove();
+                            }
+                        }
+                        setStatusMessage('Slot(s) deleted successfully!', 'success');
                     } else {
-                        alert('Failed to delete slot(s): ' + data.message);
+                        setStatusMessage('Failed to delete slot(s): ' + data.message, 'error');
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    alert('An error occurred while deleting the slot(s).');
+                    setStatusMessage('An error occurred while deleting the slot(s).', 'error');
                 });
             }
 
@@ -420,14 +575,14 @@
                 .then(data => {
                     if (data.success) {
                         calendar.refetchEvents();  // Reload all events to reflect changes
-                        alert('Location changed successfully!');
+                        setStatusMessage('Location changed successfully!', 'success');
                     } else {
-                        alert('Failed to change location: ' + data.message);
+                        setStatusMessage('Failed to change location: ' + data.message, 'error');
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    alert('An error occurred while changing the location.');
+                    setStatusMessage('An error occurred while changing the location.', 'error');
                 });
             }
 
@@ -449,19 +604,9 @@
                 if (event.target == exportModal) {
                     exportModal.style.display = 'none';
                 }
-                if (event.target == bookedSlotModal) {
-                    bookedSlotModal.style.display = 'none';
+                if (event.target == slotModal) {
+                    slotModal.style.display = 'none';
                 }
-            }
-
-            function formatDateTime(date) {
-                // Create a new date object in the local time zone
-                const localDate = new Date(date.getTime() + date.getTimezoneOffset() * 60000);
-                return localDate.toLocaleString('en-GB', { 
-                    hour: '2-digit', 
-                    minute: '2-digit',
-                    hour12: false 
-                });
             }
         });
     </script>
