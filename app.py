@@ -26,15 +26,43 @@ import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import hmac
+from dateutil.parser import isoparse
 
 load_dotenv()  # This line loads the variables from .env
 
 london_tz = ZoneInfo("Europe/London")
 
+_BOOKING_NAME_RE = re.compile(r"^[a-zA-Z0-9\s'()\[\],&-]+$")
+
+def _get_bearer_token(auth_header):
+    if not auth_header:
+        return None
+    # RFC 6750 bearer token, case-insensitive scheme.
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        return token or None
+    return None
+
+def _admin_api_token_valid(provided_token) -> bool:
+    expected = os.getenv("ADMIN_API_TOKEN")
+    if not expected or not provided_token:
+        return False
+    # Avoid timing leaks (not a big deal here, but essentially free).
+    return hmac.compare_digest(provided_token, expected)
+
+def _is_admin_authenticated() -> bool:
+    # Browser-session admin login.
+    if session.get("admin_logged_in"):
+        return True
+    # Machine-to-machine admin auth.
+    provided = _get_bearer_token(request.headers.get("Authorization"))
+    return _admin_api_token_valid(provided)
+
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not session.get('admin_logged_in'):
+        if not _is_admin_authenticated():
             return jsonify({'error': 'Unauthorized'}), 401
         return f(*args, **kwargs)
     return decorated_function
@@ -61,6 +89,71 @@ Location: {location}
     except Exception as e:
         app.logger.error(f"Error sending email: {str(e)}")
         return False
+
+def _parse_local_datetime(value, field_name: str) -> datetime:
+    if value is None:
+        raise ValueError(f"Missing field '{field_name}'")
+    if not isinstance(value, str):
+        raise ValueError(f"Field '{field_name}' must be a string")
+
+    value = value.strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ValueError(
+            f"Field '{field_name}' must include a time (e.g. 2026-02-16T14:00:00)"
+        )
+
+    try:
+        dt = isoparse(value)
+    except Exception as e:
+        raise ValueError(f"Field '{field_name}' must be an ISO datetime") from e
+
+    # DB stores naive datetimes interpreted as Europe/London local time.
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(london_tz).replace(tzinfo=None)
+    return dt
+
+def _normalize_booking_name(payload: dict) -> str:
+    students = payload.get("students")
+    name = payload.get("name")
+
+    if students is not None:
+        if not isinstance(students, list) or not all(isinstance(s, str) for s in students):
+            raise ValueError("Field 'students' must be a list of strings")
+        cleaned = [s.strip() for s in students if s.strip()]
+        if not cleaned:
+            raise ValueError("Field 'students' must not be empty")
+        normalized = ", ".join(cleaned)
+    elif name is not None:
+        if not isinstance(name, str):
+            raise ValueError("Field 'name' must be a string")
+        normalized = name.strip()
+        if not normalized:
+            raise ValueError("Field 'name' must not be empty")
+    else:
+        raise ValueError("Missing field 'students' (list) or 'name' (string)")
+
+    if len(normalized) > 100:
+        raise ValueError("Booking name too long (max 100 chars)")
+    if not _BOOKING_NAME_RE.match(normalized):
+        raise ValueError("Booking name contains invalid characters")
+    return normalized
+
+def _normalize_location(payload: dict):
+    location = payload.get("location")
+    if location is None:
+        return None
+    if not isinstance(location, str):
+        raise ValueError("Field 'location' must be a string")
+    location = location.strip()
+    if not location:
+        raise ValueError("Field 'location' must not be empty")
+    if len(location) > 200:
+        raise ValueError("Location too long (max 200 chars)")
+    # Basic XSS hardening for API callers. The web UI should be treated as the
+    # canonical way to set rich locations if ever needed.
+    if "<" in location or ">" in location:
+        raise ValueError("Location must not contain '<' or '>'")
+    return location
 
 app = Flask(__name__)
 Talisman(app, content_security_policy=None)
@@ -287,6 +380,10 @@ def get_timeslots():
         'is_repeated': slot.is_repeated
     } for slot in timeslots])
 
+@app.route('/api/health', methods=['GET'])
+def health():
+    return jsonify({"ok": True})
+
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == 'POST':
@@ -404,6 +501,195 @@ def change_location(id):
         return jsonify({'success': False, 'message': 'New location not provided'})
     app.logger.warning(f"Failed to update location for slot {id}: Slot not found")
     return jsonify({'success': False, 'message': 'Time slot not found'})
+
+@app.route('/api/admin/book_supervision', methods=['POST'])
+@admin_required
+def book_supervision():
+    """
+    Create or update a booked supervision slot.
+
+    Request JSON:
+      - start_time: ISO datetime (required)
+      - end_time: ISO datetime (required)
+      - students: [str, ...] OR name: str (required)
+      - location: str (optional; inferred from overlapping available slots if omitted)
+
+    Semantics:
+      - If an existing booked slot exactly matches (start_time, end_time), update its name/location.
+      - If the requested time overlaps any other booked slot, return 409.
+      - If it overlaps available slots, those are split/shrunk/deleted to avoid overlaps.
+      - If it exactly matches an available slot, that slot is converted to booked (preserving ID/UID).
+    """
+    payload = request.get_json(silent=True) or {}
+    try:
+        start_time = _parse_local_datetime(payload.get("start_time"), "start_time")
+        end_time = _parse_local_datetime(payload.get("end_time"), "end_time")
+        if end_time <= start_time:
+            return jsonify({"success": False, "message": "end_time must be after start_time"}), 400
+
+        booking_name = _normalize_booking_name(payload)
+        requested_location = _normalize_location(payload)  # may be None
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+
+    try:
+        overlapping = (
+            TimeSlot.query.filter(TimeSlot.start_time < end_time, TimeSlot.end_time > start_time)
+            .order_by(TimeSlot.start_time)
+            .all()
+        )
+
+        # If there's an exact matching booked slot, treat this as an update.
+        for slot in overlapping:
+            if (
+                slot.is_available is False
+                and slot.start_time == start_time
+                and slot.end_time == end_time
+            ):
+                slot.name = booking_name
+                if requested_location is not None:
+                    slot.location = requested_location
+                db.session.commit()
+                return jsonify(
+                    {
+                        "success": True,
+                        "action": "updated",
+                        "id": slot.id,
+                        "start_time": slot.start_time.isoformat(),
+                        "end_time": slot.end_time.isoformat(),
+                        "name": slot.name,
+                        "location": slot.location,
+                    }
+                )
+
+        booked_conflicts = [s for s in overlapping if s.is_available is False]
+        if booked_conflicts:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Requested time overlaps an existing booked slot",
+                        "conflicts": [
+                            {
+                                "id": s.id,
+                                "start_time": s.start_time.isoformat(),
+                                "end_time": s.end_time.isoformat(),
+                                "name": s.name,
+                                "location": s.location,
+                            }
+                            for s in booked_conflicts
+                        ],
+                    }
+                ),
+                409,
+            )
+
+        # Infer location if not provided.
+        location = requested_location
+        if location is None:
+            locations = {s.location for s in overlapping if s.is_available and s.location}
+            if len(locations) == 1:
+                location = next(iter(locations))
+            else:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "message": "Field 'location' is required (could not infer from existing slots)",
+                        }
+                    ),
+                    400,
+                )
+
+        # Exact match available slot: convert it in place (keeps ID for iCal UID stability).
+        for slot in overlapping:
+            if (
+                slot.is_available is True
+                and slot.start_time == start_time
+                and slot.end_time == end_time
+            ):
+                slot.is_available = False
+                slot.name = booking_name
+                slot.location = location
+                slot.is_repeated = False
+                db.session.commit()
+                return jsonify(
+                    {
+                        "success": True,
+                        "action": "booked_existing",
+                        "id": slot.id,
+                        "start_time": slot.start_time.isoformat(),
+                        "end_time": slot.end_time.isoformat(),
+                        "name": slot.name,
+                        "location": slot.location,
+                    }
+                )
+
+        # Otherwise: adjust any overlapping *available* slots to remove overlap, then insert the booked slot.
+        for slot in overlapping:
+            if not slot.is_available:
+                continue
+
+            # Fully covered: delete the slot.
+            if slot.start_time >= start_time and slot.end_time <= end_time:
+                db.session.delete(slot)
+                continue
+
+            # Overlap on the right: shrink end.
+            if slot.start_time < start_time < slot.end_time <= end_time:
+                slot.end_time = start_time
+                slot.name = None
+                slot.is_repeated = False
+                continue
+
+            # Overlap on the left: move start.
+            if start_time <= slot.start_time < end_time < slot.end_time:
+                slot.start_time = end_time
+                slot.name = None
+                slot.is_repeated = False
+                continue
+
+            # Target is strictly inside this available slot: split into left + right.
+            if slot.start_time < start_time and slot.end_time > end_time:
+                right = TimeSlot(
+                    start_time=end_time,
+                    end_time=slot.end_time,
+                    is_available=True,
+                    name=None,
+                    location=slot.location,
+                    is_repeated=False,
+                )
+                slot.end_time = start_time
+                slot.name = None
+                slot.is_repeated = False
+                db.session.add(right)
+                continue
+
+        booked = TimeSlot(
+            start_time=start_time,
+            end_time=end_time,
+            is_available=False,
+            name=booking_name,
+            location=location,
+            is_repeated=False,
+        )
+        db.session.add(booked)
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "action": "created",
+                "id": booked.id,
+                "start_time": booked.start_time.isoformat(),
+                "end_time": booked.end_time.isoformat(),
+                "name": booked.name,
+                "location": booked.location,
+            }
+        )
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        app.logger.error(f"Database error booking supervision: {str(e)}")
+        return jsonify({"success": False, "message": "Database error"}), 500
 
 @app.route('/api/export/<calendar_id>')
 def export_calendar(calendar_id):
