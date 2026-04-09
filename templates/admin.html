@@ -294,14 +294,38 @@
             function saveTimeSlots() {
                 saveButton.disabled = true;
                 const events = calendar.getEvents();
-                const slots = events.map(event => ({
-                    id: event.id,
-                    start_time: event.start.toISOString(),
-                    end_time: event.end.toISOString(),
-                    is_available: event.extendedProps.is_available,
-                    location: event.extendedProps.location,
-                    name: event.extendedProps.name
-                }));
+                const toApiDateTime = (event, fieldName) => {
+                    const rawValue = fieldName === 'start' ? event.startStr : event.endStr;
+                    if (!rawValue) {
+                        throw new Error(`Event ${event.id || '(new)'} is missing ${fieldName} time`);
+                    }
+
+                    const match = rawValue.match(
+                        /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/
+                    );
+                    if (!match) {
+                        throw new Error(`Unexpected ${fieldName} datetime format: ${rawValue}`);
+                    }
+                    // Send Europe/London wall-clock values as naive datetimes.
+                    return match[1];
+                };
+
+                let slots;
+                try {
+                    slots = events.map(event => ({
+                        id: event.id,
+                        start_time: toApiDateTime(event, 'start'),
+                        end_time: toApiDateTime(event, 'end'),
+                        is_available: event.extendedProps.is_available,
+                        location: event.extendedProps.location,
+                        name: event.extendedProps.name
+                    }));
+                } catch (error) {
+                    console.error('Error preparing slots for save:', error);
+                    setStatusMessage(`Failed to prepare slot data: ${error.message}`, 'error');
+                    saveButton.disabled = false;
+                    return;
+                }
 
                 console.log('Saving slots:', slots);  // Debug log
 
