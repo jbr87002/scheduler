@@ -10,9 +10,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from dotenv import load_dotenv
 from dateutil.relativedelta import relativedelta
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from zoneinfo import ZoneInfo
-from sqlalchemy import func
+from sqlalchemy import func, or_
 import uuid
 from flask import send_file, make_response
 import logging
@@ -155,6 +155,43 @@ def _normalize_location(payload: dict):
         raise ValueError("Location must not contain '<' or '>'")
     return location
 
+def _normalize_optional_slot_name(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("Field 'name' must be a string")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 100:
+        raise ValueError("Name too long (max 100 chars)")
+    if not _BOOKING_NAME_RE.match(normalized):
+        raise ValueError("Name contains invalid characters")
+    return normalized
+
+def _parse_end_of_term(value: str) -> datetime:
+    if not value:
+        raise ValueError("END_OF_TERM must be configured to use repeat signup")
+    try:
+        dt = isoparse(value.strip())
+    except Exception as e:
+        raise ValueError("END_OF_TERM must be an ISO date or datetime") from e
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(london_tz).replace(tzinfo=None)
+    return dt
+
+def _repeated_occurrences(slot_start: datetime, slot_duration: timedelta, end_of_term: datetime):
+    current_date = slot_start + timedelta(weeks=1)
+    while current_date.date() <= end_of_term.date():
+        repeated_start = current_date.replace(
+            hour=slot_start.hour,
+            minute=slot_start.minute,
+            second=slot_start.second,
+            microsecond=slot_start.microsecond,
+        )
+        yield repeated_start, repeated_start + slot_duration
+        current_date += timedelta(weeks=1)
+
 app = Flask(__name__)
 Talisman(app, content_security_policy=None)
 @app.before_request
@@ -196,6 +233,28 @@ class Admin(db.Model):
         self.password_hash = generate_password_hash(password)
         self.calendar_id = str(uuid.uuid4())
 
+def ensure_admin_account():
+    admin = Admin.query.first()
+    if admin:
+        return admin
+
+    admin_password = os.getenv('ADMIN_PASSWORD')
+    if not admin_password:
+        raise RuntimeError("ADMIN_PASSWORD must be set to initialize admin account")
+
+    app.logger.warning("No admin user found, creating default admin")
+    admin = Admin(username='admin', password=admin_password)
+    db.session.add(admin)
+    try:
+        db.session.commit()
+        return admin
+    except IntegrityError:
+        db.session.rollback()
+        admin = Admin.query.first()
+        if admin:
+            return admin
+        raise
+
 @app.route('/')
 def index():
     app.logger.info('Accessing index page')
@@ -204,8 +263,11 @@ def index():
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    data = request.json
+    data = request.get_json(silent=True)
     app.logger.info("Signup attempt received")
+
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'message': 'Request body must be a JSON object'}), 400
 
     # Input validation
     if not all(key in data for key in ['id', 'name', 'repeat']):
@@ -225,77 +287,127 @@ def signup():
         return jsonify({'success': False, 'message': 'Invalid slot ID'}), 400
 
     # Validate repeat
-    if not isinstance(data.get('repeat'), bool):
+    repeat = data.get('repeat')
+    if not isinstance(repeat, bool):
         return jsonify({'success': False, 'message': 'Invalid repeat value'}), 400
 
-    # Use parameterized query to prevent SQL injection
-    timeslot = db.session.execute(
-        text("SELECT * FROM time_slot WHERE id = :id AND is_available = :is_available"),
-        {"id": slot_id, "is_available": True}
-    ).fetchone()
+    try:
+        end_of_term = _parse_end_of_term(os.getenv('END_OF_TERM')) if repeat else None
+    except ValueError as e:
+        app.logger.error(str(e))
+        return jsonify({'success': False, 'message': str(e)}), 500
 
-    if timeslot:
-        try:
-            # Book the current slot
-            db.session.execute(
-                text("UPDATE time_slot SET is_available = :is_available, name = :name, is_repeated = :is_repeated WHERE id = :id"),
-                {"is_available": False, "name": name, "is_repeated": data['repeat'], "id": slot_id}
-            )
-
-            if data['repeat']:
-                app.logger.info(f"Creating repeated slots for {name}")
-                # Create repeated slots until the end of term
-                current_date = timeslot.start_time
-                end_of_term = datetime.fromisoformat(os.getenv('END_OF_TERM')).replace(tzinfo=london_tz)
-                
-                while current_date.date() <= end_of_term.date():
-                    if current_date.date() != timeslot.start_time.date():  # Skip the original date
-                        repeated_start = current_date.replace(
-                            hour=timeslot.start_time.hour,
-                            minute=timeslot.start_time.minute
-                        )
-                        repeated_end = repeated_start + (timeslot.end_time - timeslot.start_time)
-                        
-                        db.session.execute(
-                            text("INSERT INTO time_slot (start_time, end_time, is_available, name, location, is_repeated) "
-                                 "VALUES (:start_time, :end_time, :is_available, :name, :location, :is_repeated)"),
-                            {
-                                "start_time": repeated_start,
-                                "end_time": repeated_end,
-                                "is_available": False,
-                                "name": name,
-                                "location": timeslot.location,
-                                "is_repeated": True
-                            }
-                        )
-                        app.logger.debug(f"Created repeated slot: {repeated_start} - {repeated_end}")
-                    
-                    current_date += timedelta(weeks=1)
-            
-            db.session.commit()
-            app.logger.info(f"Successfully booked slot(s) for {name}")
-
-            # send confirmation email
-            send_confirmation_email(
-                student_name=name,
-                slot_start=timeslot.start_time,
-                slot_end=timeslot.end_time,
-                location=timeslot.location
-            )
-
-            return jsonify({'success': True})
-        except SQLAlchemyError as e:
-            db.session.rollback()
-            app.logger.error(f"Database error: {str(e)}")
-            return jsonify({'success': False, 'message': 'An error occurred while booking the slot'}), 500
-    else:
+    timeslot = db.session.get(TimeSlot, slot_id)
+    if not timeslot:
         app.logger.warning(f"Failed to book slot {slot_id}: Slot not available")
         return jsonify({'success': False, 'message': 'Time slot not available or invalid'}), 400
+
+    slot_start = timeslot.start_time
+    slot_end = timeslot.end_time
+    slot_location = timeslot.location
+    slot_duration = slot_end - slot_start
+
+    try:
+        # Atomic transition: only one request can book an available slot.
+        update_result = db.session.execute(
+            text(
+                "UPDATE time_slot "
+                "SET is_available = :is_available, name = :name, is_repeated = :is_repeated "
+                "WHERE id = :id AND is_available = :expected_available"
+            ),
+            {
+                "is_available": False,
+                "name": name,
+                "is_repeated": repeat,
+                "id": slot_id,
+                "expected_available": True,
+            }
+        )
+        if update_result.rowcount != 1:
+            db.session.rollback()
+            app.logger.warning(f"Failed to book slot {slot_id}: Slot already booked")
+            return jsonify({'success': False, 'message': 'Time slot not available or invalid'}), 409
+
+        repeat_occurrences = (
+            list(_repeated_occurrences(slot_start, slot_duration, end_of_term))
+            if repeat
+            else []
+        )
+        if repeat_occurrences:
+            conflict_filters = [
+                (TimeSlot.start_time < repeated_end) & (TimeSlot.end_time > repeated_start)
+                for repeated_start, repeated_end in repeat_occurrences
+            ]
+            repeated_conflicts = (
+                TimeSlot.query.filter(TimeSlot.is_available == False)
+                .filter(or_(*conflict_filters))
+                .order_by(TimeSlot.start_time)
+                .all()
+            )
+            if repeated_conflicts:
+                db.session.rollback()
+                return (
+                    jsonify({
+                        'success': False,
+                        'message': 'Repeating signup conflicts with an existing booked slot',
+                        'conflicts': [
+                            {
+                                'id': conflict.id,
+                                'start_time': conflict.start_time.isoformat(),
+                                'end_time': conflict.end_time.isoformat(),
+                                'name': conflict.name,
+                                'location': conflict.location,
+                            }
+                            for conflict in repeated_conflicts
+                        ],
+                    }),
+                    409,
+                )
+
+        if repeat:
+            app.logger.info(f"Creating repeated slots for {name}")
+            for repeated_start, repeated_end in repeat_occurrences:
+                db.session.execute(
+                    text(
+                        "INSERT INTO time_slot (start_time, end_time, is_available, name, location, is_repeated) "
+                        "VALUES (:start_time, :end_time, :is_available, :name, :location, :is_repeated)"
+                    ),
+                    {
+                        "start_time": repeated_start,
+                        "end_time": repeated_end,
+                        "is_available": False,
+                        "name": name,
+                        "location": slot_location,
+                        "is_repeated": True,
+                    }
+                )
+                app.logger.debug(f"Created repeated slot: {repeated_start} - {repeated_end}")
+
+        db.session.commit()
+        app.logger.info(f"Successfully booked slot(s) for {name}")
+
+        send_confirmation_email(
+            student_name=name,
+            slot_start=slot_start,
+            slot_end=slot_end,
+            location=slot_location
+        )
+
+        return jsonify({'success': True})
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        app.logger.error(f"Database error: {str(e)}")
+        return jsonify({'success': False, 'message': 'An error occurred while booking the slot'}), 500
 
 @app.route('/api/admin/set_timeslots', methods=['POST'])
 @admin_required
 def set_timeslots():
-    slots = request.json
+    slots = request.get_json(silent=True)
+    if not isinstance(slots, list):
+        return jsonify({
+            "success": False,
+            "message": "Request body must be a JSON array of slots"
+        }), 400
     app.logger.info(f"Received {len(slots)} slots to set")
 
     try:
@@ -311,42 +423,49 @@ def set_timeslots():
 
         # Update or create slots
         for slot in slots:
+            if not isinstance(slot, dict):
+                raise ValueError("Each slot must be an object")
+
             slot_id = slot.get('id')
-            
-            # Parse times as simple datetime objects without timezone info
-            start_time = datetime.fromisoformat(slot['start_time'].replace('Z', ''))
-            end_time = datetime.fromisoformat(slot['end_time'].replace('Z', ''))
-            
+            slot_id_str = str(slot_id) if slot_id is not None else None
+            start_time = _parse_local_datetime(slot.get('start_time'), 'start_time')
+            end_time = _parse_local_datetime(slot.get('end_time'), 'end_time')
+            if end_time <= start_time:
+                raise ValueError("end_time must be after start_time")
+
+            location = _normalize_location({"location": slot.get('location')})
+            if location is None:
+                raise ValueError("Field 'location' is required")
+
+            name = _normalize_optional_slot_name(slot.get('name'))
+            is_available = slot.get('is_available', True)
+            if not isinstance(is_available, bool):
+                raise ValueError("Field 'is_available' must be a boolean")
+
             # Check if it's a new slot (temporary ID from frontend)
-            if slot_id and slot_id.startswith('temp_'):
+            if slot_id_str and slot_id_str.startswith('temp_'):
                 app.logger.debug(f"Creating new slot: {start_time} - {end_time}")
                 new_slot = TimeSlot(
                     start_time=start_time,
                     end_time=end_time,
-                    is_available=slot.get('is_available', True),
-                    name=slot.get('name'),
-                    location=slot['location']
+                    is_available=is_available,
+                    name=name,
+                    location=location
                 )
                 db.session.add(new_slot)
                 db.session.flush()  # This will assign an ID to the new slot
                 processed_slots.add(str(new_slot.id))
                 app.logger.info(f"Added new slot with ID {new_slot.id}")
-            elif slot_id in existing_slots and slot_id not in processed_slots:
-                app.logger.debug(f"Updating existing slot {slot_id}")
-                existing_slot = existing_slots[slot_id]
+            elif slot_id_str in existing_slots and slot_id_str not in processed_slots:
+                app.logger.debug(f"Updating existing slot {slot_id_str}")
+                existing_slot = existing_slots[slot_id_str]
                 existing_slot.start_time = start_time
                 existing_slot.end_time = end_time
-                existing_slot.is_available = slot.get('is_available', True)
-                existing_slot.name = slot.get('name')
-                existing_slot.location = slot['location']
-                processed_slots.add(slot_id)
-                app.logger.info(f"Updated slot {slot_id}")
-
-        # Only delete slots if we received some slots and not all existing slots were updated
-        if slots:
-            for old_id in set(existing_slots.keys()) - processed_slots:
-                app.logger.info(f"Deleting slot {old_id}")
-                db.session.delete(existing_slots[old_id])
+                existing_slot.is_available = is_available
+                existing_slot.name = name
+                existing_slot.location = location
+                processed_slots.add(slot_id_str)
+                app.logger.info(f"Updated slot {slot_id_str}")
 
         # Commit the transaction
         db.session.commit()
@@ -356,6 +475,12 @@ def set_timeslots():
             "success": True, 
             "message": f"Successfully processed {len(processed_slots)} slots"
         })
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 400
     except SQLAlchemyError as e:
         # Rollback the transaction
         db.session.rollback()
@@ -389,7 +514,11 @@ def admin_login():
     if request.method == 'POST':
         app.logger.info("Admin login attempt")
         password = request.form.get('password')
-        admin = Admin.query.first()
+        try:
+            admin = ensure_admin_account()
+        except RuntimeError as e:
+            app.logger.error(str(e))
+            return render_template('admin_login.html', error='Server configuration error'), 500
         if admin and check_password_hash(admin.password_hash, password):
             session['admin_logged_in'] = True
             session['admin_username'] = admin.username
@@ -407,14 +536,11 @@ def admin():
         return redirect(url_for('admin_login'))
     
     app.logger.info("Accessing admin page")
-    # Check if an admin user exists, if not create one
-    admin = Admin.query.first()
-    if not admin:
-        app.logger.warning("No admin user found, creating default admin")
-        # Create a default admin user
-        admin = Admin(username='admin', password=os.getenv('ADMIN_PASSWORD'))
-        db.session.add(admin)
-        db.session.commit()
+    try:
+        admin = ensure_admin_account()
+    except RuntimeError as e:
+        app.logger.error(str(e))
+        return "Server configuration error", 500
     
     supervision_start_date = os.getenv('SUPERVISION_START_DATE')
     calendar_url = url_for('export_calendar', calendar_id=admin.calendar_id, _external=True)
@@ -465,40 +591,44 @@ def delete_timeslot(id):
 @admin_required
 def change_location(id):
     app.logger.info(f"Attempting to change location for timeslot {id}")
-    slot = TimeSlot.query.get(id)
+    slot = db.session.get(TimeSlot, id)
     if slot:
-        data = request.json
-        new_location = data.get('location')
-        update_subsequent = data.get('update_subsequent', False)
-        
-        if new_location:
-            if update_subsequent and slot.is_repeated:
-                app.logger.info(f"Updating location for slot {id} and subsequent repeating slots")
-                # Update this slot and all subsequent repeating slots
-                subsequent_slots = TimeSlot.query.filter(
-                    TimeSlot.start_time >= slot.start_time,
-                    func.extract('dow', TimeSlot.start_time) == func.extract('dow', slot.start_time),  # Match weekday
-                    func.extract('hour', TimeSlot.start_time) == func.extract('hour', slot.start_time),  # Match start hour
-                    func.extract('minute', TimeSlot.start_time) == func.extract('minute', slot.start_time),  # Match start minute
-                    func.extract('hour', TimeSlot.end_time) == func.extract('hour', slot.end_time),  # Match end hour
-                    func.extract('minute', TimeSlot.end_time) == func.extract('minute', slot.end_time),  # Match end minute
-                    TimeSlot.is_repeated == True,
-                    TimeSlot.name == slot.name
-                ).all()
-                
-                for subsequent_slot in subsequent_slots:
-                    subsequent_slot.location = new_location
-                    app.logger.debug(f"Updated location for slot {subsequent_slot.id}")
-            else:
-                app.logger.info(f"Updating location for slot {id}")
-                # Update only this slot
-                slot.location = new_location
-            
-            db.session.commit()
-            app.logger.info(f"Successfully updated location for slot {id}")
-            return jsonify({'success': True})
-        app.logger.warning(f"Failed to update location for slot {id}: New location not provided")
-        return jsonify({'success': False, 'message': 'New location not provided'})
+        data = request.get_json(silent=True) or {}
+        update_subsequent = bool(data.get('update_subsequent', False))
+        try:
+            new_location = _normalize_location({"location": data.get('location')})
+        except ValueError as e:
+            return jsonify({'success': False, 'message': str(e)}), 400
+
+        if new_location is None:
+            app.logger.warning(f"Failed to update location for slot {id}: New location not provided")
+            return jsonify({'success': False, 'message': 'New location not provided'}), 400
+
+        if update_subsequent and slot.is_repeated:
+            app.logger.info(f"Updating location for slot {id} and subsequent repeating slots")
+            # Update this slot and all subsequent repeating slots
+            subsequent_slots = TimeSlot.query.filter(
+                TimeSlot.start_time >= slot.start_time,
+                func.extract('dow', TimeSlot.start_time) == func.extract('dow', slot.start_time),  # Match weekday
+                func.extract('hour', TimeSlot.start_time) == func.extract('hour', slot.start_time),  # Match start hour
+                func.extract('minute', TimeSlot.start_time) == func.extract('minute', slot.start_time),  # Match start minute
+                func.extract('hour', TimeSlot.end_time) == func.extract('hour', slot.end_time),  # Match end hour
+                func.extract('minute', TimeSlot.end_time) == func.extract('minute', slot.end_time),  # Match end minute
+                TimeSlot.is_repeated == True,
+                TimeSlot.name == slot.name
+            ).all()
+
+            for subsequent_slot in subsequent_slots:
+                subsequent_slot.location = new_location
+                app.logger.debug(f"Updated location for slot {subsequent_slot.id}")
+        else:
+            app.logger.info(f"Updating location for slot {id}")
+            # Update only this slot
+            slot.location = new_location
+
+        db.session.commit()
+        app.logger.info(f"Successfully updated location for slot {id}")
+        return jsonify({'success': True})
     app.logger.warning(f"Failed to update location for slot {id}: Slot not found")
     return jsonify({'success': False, 'message': 'Time slot not found'})
 
@@ -747,12 +877,8 @@ def faq():
 
 def init_db():
     with app.app_context():
-        db.create_all()  # This will create all tables defined in your models
-        
-        if not Admin.query.first():
-            admin = Admin(username='admin', password=os.getenv('ADMIN_PASSWORD'))
-            db.session.add(admin)
-            db.session.commit()
+        db.create_all()
+        ensure_admin_account()
 
 # Configure logging
 def configure_logging():
@@ -777,8 +903,8 @@ def configure_logging():
 
 # Call this function right after creating the Flask app
 configure_logging()
+init_db()
 
 # Call this function when you start your app
 if __name__ == '__main__':
-    init_db()
     app.run(host='127.0.0.1', port=5001, debug=True)

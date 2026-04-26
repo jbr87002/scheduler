@@ -9,11 +9,16 @@
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css' rel='stylesheet' />
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js'></script>
     <style>
+        html {
+            background: #ffffff;
+        }
         body { 
             font-family: Arial, sans-serif; 
             max-width: 1400px; 
             margin: 0 auto; 
             padding: 20px; 
+            background: #ffffff;
+            color: #111111;
         }
         #calendar {
             max-width: 1200px;
@@ -112,6 +117,23 @@
         }
         .hidden {
             display: none;
+        }
+        @media (max-width: 768px) {
+            .fc .fc-toolbar {
+                flex-direction: column;
+                gap: 8px;
+            }
+            .fc .fc-toolbar-chunk {
+                display: flex;
+                justify-content: center;
+            }
+            .fc-toolbar-title {
+                text-align: center;
+            }
+            .fc-button {
+                font-size: 0.9em !important;
+                padding: 0.2em 0.4em !important;
+            }
         }
     </style>
 </head>
@@ -401,19 +423,39 @@
                 return `${hours}:${minutes}`;
             }
 
-            function parseTimeOnDate(date, timeString) {
-                if (!date) {
+            function formatEventTime(event, fieldName) {
+                const value = fieldName === 'start' ? event.startStr : event.endStr;
+                const match = value && value.match(/T(\d{2}:\d{2})/);
+                if (match) {
+                    return match[1];
+                }
+                const fallback = fieldName === 'start' ? event.start : event.end;
+                return fallback ? formatTime(fallback) : '';
+            }
+
+            function eventDatePart(event) {
+                const value = event && (event.startStr || event.start);
+                if (!value) {
+                    return null;
+                }
+                if (typeof value === 'string') {
+                    return value.slice(0, 10);
+                }
+                const year = value.getFullYear();
+                const month = String(value.getMonth() + 1).padStart(2, '0');
+                const day = String(value.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+
+            function parseTimeOnDate(datePart, timeString) {
+                if (!datePart) {
                     return null;
                 }
                 const match = timeString.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
                 if (!match) {
                     return null;
                 }
-                const hours = Number(match[1]);
-                const minutes = Number(match[2]);
-                const updated = new Date(date);
-                updated.setHours(hours, minutes, 0, 0);
-                return updated;
+                return `${datePart}T${match[1].padStart(2, '0')}:${match[2]}:00`;
             }
 
             function openSlotModal({ mode, event, start, end }) {
@@ -442,8 +484,8 @@
                 }
 
                 slotLocationInput.value = mode === 'create' ? '' : (event.extendedProps.location || '');
-                slotStartInput.value = baseDate ? formatTime(baseDate) : '';
-                slotEndInput.value = effectiveEnd ? formatTime(effectiveEnd) : '';
+                slotStartInput.value = event ? formatEventTime(event, 'start') : (baseDate ? formatTime(baseDate) : '');
+                slotEndInput.value = event ? formatEventTime(event, 'end') : (effectiveEnd ? formatTime(effectiveEnd) : '');
 
                 setTimeInputStep(mode === 'create' ? 30 : 5);
 
@@ -468,16 +510,18 @@
                     return;
                 }
 
-                const baseDate = activeEvent ? activeEvent.start : activeCreateStart;
-                const startValue = parseTimeOnDate(baseDate, slotStartInput.value);
-                const endValue = parseTimeOnDate(baseDate, slotEndInput.value);
+                const datePart = activeEvent ? eventDatePart(activeEvent) : eventDatePart({ start: activeCreateStart });
+                const startValue = parseTimeOnDate(datePart, slotStartInput.value);
+                const endValue = parseTimeOnDate(datePart, slotEndInput.value);
                 if (!startValue || !endValue) {
                     setModalMessage('Please enter times as HH:MM in 24-hour format.', 'error');
                     return;
                 }
 
                 const stepMinutes = activeMode === 'create' ? 30 : 5;
-                if (startValue.getMinutes() % stepMinutes !== 0 || endValue.getMinutes() % stepMinutes !== 0) {
+                const startMinutes = Number(slotStartInput.value.split(':')[1]);
+                const endMinutes = Number(slotEndInput.value.split(':')[1]);
+                if (startMinutes % stepMinutes !== 0 || endMinutes % stepMinutes !== 0) {
                     const stepLabel = stepMinutes === 30 ? '30' : '5';
                     setModalMessage(`Please use ${stepLabel}-minute increments.`, 'error');
                     return;
@@ -524,8 +568,12 @@
                     return;
                 }
                 if (activeEvent.extendedProps.is_available) {
-                    activeEvent.remove();
-                    setStatusMessage('Slot removed. Remember to save.', 'info');
+                    if (String(activeEvent.id).startsWith('temp_')) {
+                        activeEvent.remove();
+                        setStatusMessage('Slot removed.', 'success');
+                    } else {
+                        deleteBookedSlot(activeEvent.id, false);
+                    }
                     closeSlotModal();
                     return;
                 }

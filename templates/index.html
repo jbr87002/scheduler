@@ -8,12 +8,17 @@
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css' rel='stylesheet' />
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js'></script>
     <style>
+        html {
+            background: #ffffff;
+        }
         body { 
             font-family: Arial, sans-serif; 
             max-width: 1400px; 
             margin: 0 auto; 
             padding: 20px; 
             padding-bottom: 100px; /* Adjust this value based on your footer height */
+            background: #ffffff;
+            color: #111111;
         }
         #calendar {
             max-width: 1200px;
@@ -110,8 +115,17 @@
         }
         /* Media query for mobile devices */
         @media (max-width: 768px) {
+            .fc .fc-toolbar {
+                flex-direction: column;
+                gap: 8px;
+            }
+            .fc .fc-toolbar-chunk {
+                display: flex;
+                justify-content: center;
+            }
             .fc-toolbar-title {
                 font-size: 1.5em !important;
+                text-align: center;
             }
             /* New styles for smaller calendar buttons on mobile */
             .fc-button {
@@ -163,9 +177,9 @@
     <script>
         function adjustLayout() {
             var headerTitle = document.getElementById('headerTitle');
-            var mirexImage = document.getElementById('mirexImage');
-            var artemisininImage = document.getElementById('artemisininImage');
-            var srcfBadge = document.getElementById('srcfBadge');
+            var mirexImage = document.getElementById('mirexFooter');
+            var artemisininImage = document.getElementById('artemisininFooter');
+            var srcfBadge = document.getElementById('srcfFooter');
             var footerContainer = document.getElementById('footerContainer');
 
             if (window.innerWidth <= 768) { // Mobile breakpoint
@@ -348,13 +362,16 @@
                 const dateOptions = { day: '2-digit', month: '2-digit', year: 'numeric' };
                 const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
 
-                infoElement.innerHTML = `
-                    <strong>Booked by:</strong> ${event.extendedProps.name}<br>
-                    <strong>Location:</strong> ${event.extendedProps.location}<br>
-                    <strong>Time:</strong> ${formatDateTime(event.start)} - ${formatDateTime(event.end)}<br>
-                    <strong>Date:</strong> ${event.start.toLocaleDateString('en-GB', dateOptions)}<br>
-                    <strong>Repeating:</strong> ${event.extendedProps.isRepeated ? 'Yes' : 'No'}
-                `;
+                const bookedBy = event.extendedProps.name || 'Unknown';
+                const location = event.extendedProps.location || 'Unknown';
+                const repeating = event.extendedProps.isRepeated ? 'Yes' : 'No';
+
+                infoElement.replaceChildren();
+                appendInfoLine(infoElement, 'Booked by', bookedBy);
+                appendInfoLine(infoElement, 'Location', location);
+                appendInfoLine(infoElement, 'Time', `${formatDateTime(event.start)} - ${formatDateTime(event.end)}`);
+                appendInfoLine(infoElement, 'Date', event.start.toLocaleDateString('en-GB', dateOptions));
+                appendInfoLine(infoElement, 'Repeating', repeating);
 
                 modal.style.display = 'block';
 
@@ -376,6 +393,14 @@
                     minute: '2-digit',
                     hour12: false 
                 });
+            }
+
+            function appendInfoLine(container, label, value) {
+                const strong = document.createElement('strong');
+                strong.textContent = `${label}: `;
+                container.appendChild(strong);
+                container.appendChild(document.createTextNode(value));
+                container.appendChild(document.createElement('br'));
             }
         });
     </script>
