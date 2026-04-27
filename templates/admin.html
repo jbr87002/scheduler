@@ -257,11 +257,7 @@
                     };
                 },
                 select: function(info) {
-                    const snappedStart = snapToInterval(info.start, 30);
-                    const selectedMinutes = Math.round((info.end - info.start) / 60000);
-                    const snappedDuration = Math.max(30, Math.ceil(selectedMinutes / 30) * 30);
-                    const snappedEnd = new Date(snappedStart.getTime() + snappedDuration * 60000);
-                    openSlotModal({ mode: 'create', start: snappedStart, end: snappedEnd });
+                    openSlotModal({ mode: 'create', start: info.startStr, end: info.endStr });
                     calendar.unselect();
                 },
                 eventClick: function(info) {
@@ -405,6 +401,13 @@
                 if (!date) {
                     return '';
                 }
+                if (typeof date === 'string') {
+                    const match = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                    if (match) {
+                        return `${match[3]}/${match[2]}/${match[1]}`;
+                    }
+                    return '';
+                }
                 return date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
             }
 
@@ -418,6 +421,10 @@
             }
 
             function formatTime(date) {
+                if (typeof date === 'string') {
+                    const match = date.match(/T(\d{2}:\d{2})/);
+                    return match ? match[1] : '';
+                }
                 const hours = String(date.getHours()).padStart(2, '0');
                 const minutes = String(date.getMinutes()).padStart(2, '0');
                 return `${hours}:${minutes}`;
