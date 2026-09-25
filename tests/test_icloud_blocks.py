@@ -1,6 +1,7 @@
 import os
-from datetime import datetime
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
+from icalendar import Event
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
@@ -9,6 +10,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/scheduler-test.sqlite")
 
 from app import app, db, TimeSlot
 from icloud_availability import ICloudUnavailable
+import icloud_availability
 
 
 def setup_function():
@@ -82,3 +84,90 @@ def test_block_requires_admin():
         base_url="https://localhost",
     )
     assert response.status_code == 401
+
+
+def test_icloud_feed_is_admin_only_and_never_appears_on_public_timetable(monkeypatch):
+    sample = {
+        "title": "Private meeting", "start": "2099-06-01T09:00:00+01:00",
+        "end": "2099-06-01T10:00:00+01:00", "allDay": False,
+        "calendar": "Work", "location": "Office", "free": False,
+    }
+    monkeypatch.setattr("app.calendar_events", lambda start, end: [sample])
+    client = app.test_client()
+    url = "/api/admin/icloud/events?start=2099-06-01&end=2099-06-08"
+    assert client.get(url, base_url="https://localhost").status_code == 401
+    response = client.get(
+        url, headers={"Authorization": "Bearer test-admin-token"},
+        base_url="https://localhost",
+    )
+    assert response.status_code == 200
+    assert response.json == [sample]
+    assert response.headers["Cache-Control"] == "private, no-store"
+    public = client.get("/api/get_timeslots", base_url="https://localhost")
+    assert public.json == []
+
+
+def test_icloud_events_include_all_day_and_free_events_but_not_cancellations(monkeypatch):
+    class FakeEvent:
+        def __init__(self, component):
+            self.component = component
+
+        def get_icalendar_component(self):
+            return self.component
+
+    class FakeCalendar:
+        def __init__(self, name, events):
+            self.name = name
+            self.events = events
+
+        def get_display_name(self):
+            return self.name
+
+        def search(self, **kwargs):
+            return [FakeEvent(event) for event in self.events]
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def principal(self):
+            return self
+
+        def calendars(self):
+            return calendars
+
+    timed = Event()
+    timed.add("summary", "Morning meeting")
+    timed.add("dtstart", datetime(2099, 6, 1, 8, tzinfo=timezone.utc))
+    timed.add("dtend", datetime(2099, 6, 1, 9, tzinfo=timezone.utc))
+    all_day = Event()
+    all_day.add("summary", "Away")
+    all_day.add("dtstart", date(2099, 6, 2))
+    all_day.add("dtend", date(2099, 6, 3))
+    transparent = Event()
+    transparent.add("summary", "Optional")
+    transparent.add("dtstart", datetime(2099, 6, 1, 12, tzinfo=timezone.utc))
+    transparent.add("dtend", datetime(2099, 6, 1, 13, tzinfo=timezone.utc))
+    transparent.add("transp", "TRANSPARENT")
+    cancelled = Event()
+    cancelled.add("summary", "Cancelled")
+    cancelled.add("dtstart", date(2099, 6, 4))
+    cancelled.add("dtend", date(2099, 6, 5))
+    cancelled.add("status", "CANCELLED")
+    calendars = [
+        FakeCalendar("Work", [timed, cancelled]),
+        FakeCalendar("Benji work", [all_day]),
+        FakeCalendar("Our leisure", [transparent]),
+    ]
+    monkeypatch.setattr(icloud_availability, "_client", FakeClient)
+    start, end = datetime(2099, 6, 1), datetime(2099, 6, 8)
+    events = icloud_availability.calendar_events(start, end)
+    assert len(events) == 3
+    assert events[0]["start"] == "2099-06-01T09:00:00+01:00"
+    assert events[1]["allDay"] is True
+    assert events[1]["end"] == "2099-06-03"
+    assert events[2]["free"] is True
+    assert len(icloud_availability.busy_intervals(start, end)) == 2

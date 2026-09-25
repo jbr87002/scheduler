@@ -7,3 +7,5 @@ def test_admin_drag_selection_uses_fullcalendar_wall_clock_strings():
     assert "const start = info.startStr;" in template
     assert "const end = info.endStr;" in template
     assert "'/api/admin/create_block'" in template
+    assert "event.extendedProps.kind !== 'icloud'" in template
+    assert "'/api/admin/icloud/events'" not in Path("templates/index.html").read_text()

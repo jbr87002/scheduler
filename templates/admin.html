@@ -23,6 +23,14 @@
         <main>
             <div class="page-heading"><div><h1>Manage supervisions</h1><p class="intro">Drag across a day to add one-hour slots. Click a slot to edit it.</p></div><button id="exportCalendar">Export calendar</button></div>
             <div id="icloudStatus" class="icloud-status" role="status">Checking iCloud calendars…</div>
+            <div class="calendar-legend admin-legend" aria-label="Calendar colours">
+                <span><i class="legend-dot available-dot"></i>Available</span>
+                <span><i class="legend-dot booked-dot"></i>Booked</span>
+                <span><i class="legend-dot icloud-work-dot"></i>Work</span>
+                <span><i class="legend-dot icloud-benji-dot"></i>Benji work</span>
+                <span><i class="legend-dot icloud-leisure-dot"></i>Our leisure</span>
+            </div>
+            <div id="icloudEventMessage" class="status-message error" role="status"></div>
             <div id="message" role="status"></div>
             <div id="calendar"></div>
         </main>
@@ -237,10 +245,11 @@
                 snapDuration: '00:30:00',
                 slotMinTime: '08:00:00',
                 slotMaxTime: '20:00:00',
-                allDaySlot: false,
+                allDaySlot: true,
                 height: 'auto',
                 selectable: true,
                 selectMirror: true,
+                selectAllow: function(info) { return !info.allDay; },
                 editable: true,
                 eventOverlap: false,
                 validRange: function(nowDate) {
@@ -253,7 +262,17 @@
                     calendar.unselect();
                 },
                 eventClick: function(info) {
+                    if (info.event.extendedProps.kind === 'icloud') {
+                        return;
+                    }
                     openSlotModal({ mode: 'edit', event: info.event });
+                },
+                eventDidMount: function(info) {
+                    if (info.event.extendedProps.kind === 'icloud') {
+                        const details = info.event.extendedProps;
+                        info.el.title = `${details.calendar}: ${details.summary}` +
+                            (details.location ? `\n${details.location}` : '');
+                    }
                 },
                 eventDrop: function(info) {
                     // Handle event drag and drop
@@ -290,6 +309,49 @@
                             failureCallback(error);
                         });
                 },
+                eventSources: [{
+                    id: 'icloud',
+                    events: function(fetchInfo, successCallback, failureCallback) {
+                        const params = new URLSearchParams({
+                            start: fetchInfo.startStr.slice(0, 19),
+                            end: fetchInfo.endStr.slice(0, 19)
+                        });
+                        fetch(`/api/admin/icloud/events?${params}`, { cache: 'no-store' })
+                            .then(async response => {
+                                const data = await response.json();
+                                if (!response.ok) {
+                                    throw new Error(data.message || 'Could not load iCloud events.');
+                                }
+                                return data;
+                            })
+                            .then(data => {
+                                document.getElementById('icloudEventMessage').textContent = '';
+                                const classes = {
+                                    'Work': 'icloud-work',
+                                    'Benji work': 'icloud-benji',
+                                    'Our leisure': 'icloud-leisure'
+                                };
+                                successCallback(data.map(event => ({
+                                    title: `${event.calendar}: ${event.title}`,
+                                    start: event.start,
+                                    end: event.end,
+                                    allDay: event.allDay,
+                                    editable: false,
+                                    classNames: ['icloud-event', classes[event.calendar], event.free ? 'icloud-free' : ''].filter(Boolean),
+                                    extendedProps: {
+                                        kind: 'icloud',
+                                        calendar: event.calendar,
+                                        summary: event.title,
+                                        location: event.location
+                                    }
+                                })));
+                            })
+                            .catch(error => {
+                                document.getElementById('icloudEventMessage').textContent = error.message;
+                                failureCallback(error);
+                            });
+                    }
+                }],
                 datesSet: function(info) {
                     console.log('Admin view changed:', info.view.type);
                     console.log('Admin date changed:', info.start.toISOString());
@@ -303,7 +365,7 @@
             // Save time slots
             function saveTimeSlots() {
                 saveButton.disabled = true;
-                const events = calendar.getEvents();
+                const events = calendar.getEvents().filter(event => event.extendedProps.kind !== 'icloud');
                 const toApiDateTime = (event, fieldName) => {
                     const rawValue = fieldName === 'start' ? event.startStr : event.endStr;
                     if (!rawValue) {

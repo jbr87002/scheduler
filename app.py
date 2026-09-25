@@ -29,7 +29,7 @@ from email.mime.multipart import MIMEMultipart
 import hmac
 from dateutil.parser import isoparse
 from icloud_availability import (
-    CALENDAR_NAMES, ICloudUnavailable, busy_intervals, check_connection,
+    CALENDAR_NAMES, ICloudUnavailable, busy_intervals, calendar_events, check_connection,
     configured as icloud_configured, overlaps as overlaps_icloud,
 )
 
@@ -431,6 +431,29 @@ def icloud_status():
     except ICloudUnavailable as exc:
         app.logger.warning('iCloud connection check failed: %s', type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__)
         return jsonify({'ready': False, 'calendars': CALENDAR_NAMES, 'message': str(exc)})
+
+
+@app.route('/api/admin/icloud/events', methods=['GET'])
+@admin_required
+def icloud_events():
+    try:
+        start_raw = request.args.get('start')
+        end_raw = request.args.get('end')
+        start = datetime.fromisoformat(start_raw) if start_raw and re.fullmatch(r'\d{4}-\d{2}-\d{2}', start_raw) else _parse_local_datetime(start_raw, 'start')
+        end = datetime.fromisoformat(end_raw) if end_raw and re.fullmatch(r'\d{4}-\d{2}-\d{2}', end_raw) else _parse_local_datetime(end_raw, 'end')
+        if end <= start or end - start > timedelta(days=62):
+            raise ValueError('Select a date range of up to 62 days.')
+    except ValueError as exc:
+        return jsonify({'message': str(exc)}), 400
+    try:
+        events = calendar_events(start, end)
+    except ICloudUnavailable as exc:
+        app.logger.warning('iCloud events could not be read: %s', type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__)
+        return jsonify({'message': str(exc)}), 503
+    response = jsonify(events)
+    response.headers['Cache-Control'] = 'private, no-store'
+    response.headers['Vary'] = 'Cookie, Authorization'
+    return response
 
 
 @app.route('/api/admin/create_block', methods=['POST'])

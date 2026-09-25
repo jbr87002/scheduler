@@ -73,11 +73,10 @@ def _local(value):
     raise ValueError("Unsupported iCloud event date")
 
 
-def _event_interval(event):
-    component = event.get_icalendar_component()
+def _event_interval(component, include_transparent=False):
     if str(component.get("STATUS", "")).upper() == "CANCELLED":
         return None
-    if str(component.get("TRANSP", "")).upper() == "TRANSPARENT":
+    if not include_transparent and str(component.get("TRANSP", "")).upper() == "TRANSPARENT":
         return None
     start_field = component.get("DTSTART")
     if not start_field:
@@ -106,7 +105,7 @@ def busy_intervals(start, end):
                 for event in calendar.search(
                     start=window_start, end=window_end, event=True, expand=True
                 ):
-                    interval = _event_interval(event)
+                    interval = _event_interval(event.get_icalendar_component())
                     if interval and interval[0] < window_end and interval[1] > window_start:
                         intervals.append(interval)
     except ICloudUnavailable:
@@ -114,6 +113,41 @@ def busy_intervals(start, end):
     except Exception as exc:
         raise ICloudUnavailable("Could not read iCloud availability. No slots were created.") from exc
     return intervals
+
+
+def calendar_events(start, end):
+    """Return the selected calendars' events for the authenticated admin view."""
+    window_start = start.replace(tzinfo=LONDON)
+    window_end = end.replace(tzinfo=LONDON)
+    result = []
+    try:
+        with _client() as client:
+            for calendar_name, calendar in _selected_calendars(client).items():
+                for event in calendar.search(
+                    start=window_start, end=window_end, event=True, expand=True
+                ):
+                    component = event.get_icalendar_component()
+                    interval = _event_interval(component, include_transparent=True)
+                    if not interval or interval[0] >= window_end or interval[1] <= window_start:
+                        continue
+                    all_day = isinstance(component["DTSTART"].dt, date) and not isinstance(
+                        component["DTSTART"].dt, datetime
+                    )
+                    start_value, end_value = interval
+                    result.append({
+                        "title": str(component.get("SUMMARY") or "(Untitled event)"),
+                        "start": start_value.date().isoformat() if all_day else start_value.isoformat(),
+                        "end": end_value.date().isoformat() if all_day else end_value.isoformat(),
+                        "allDay": all_day,
+                        "calendar": calendar_name,
+                        "location": str(component.get("LOCATION") or ""),
+                        "free": str(component.get("TRANSP", "")).upper() == "TRANSPARENT",
+                    })
+    except ICloudUnavailable:
+        raise
+    except Exception as exc:
+        raise ICloudUnavailable("Could not read iCloud events.") from exc
+    return result
 
 
 def overlaps(start, end, intervals):

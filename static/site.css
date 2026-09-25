@@ -28,6 +28,11 @@ body.page { max-width: none; min-height: 100vh; margin: 0; padding: 0; backgroun
 .page .fc .fc-col-header-cell-cushion, .page .fc .fc-daygrid-day-number { color: var(--text); text-decoration: none; }.page .fc .fc-col-header-cell-cushion { padding: 8px 3px; }
 .page .fc .fc-timegrid-slot { height: 3em; }.page .fc .fc-event { cursor: pointer; border-radius: 3px; padding: 1px 3px; font-size: 12px; }
 .page .fc .available-slot { background: var(--available); border-color: #5da584; color: #153e31; }.page .fc .booked-slot { background: var(--booked); border-color: #cb849d; color: #562b3d; }
+.page-admin .fc .icloud-event { cursor: default; }
+.page-admin .fc .icloud-work { background: #dce9f7; border-color: #a9c4df; color: #264560; }
+.page-admin .fc .icloud-benji { background: #e8e1f5; border-color: #c5b4e3; color: #4d3867; }
+.page-admin .fc .icloud-leisure { background: #f9eccf; border-color: #e2c989; color: #675226; }
+.page-admin .fc .icloud-free { border-style: dashed; opacity: .78; }
 /* Forms and dialogs */
 .page .modal, .page #signupModal { display: none; position: fixed; inset: 0; z-index: 1000; overflow-y: auto; background: rgba(15, 29, 24, .48); padding: 18px; }
 .page .modal-content { position: relative; width: min(100%, 560px); max-width: 560px; margin: min(10vh, 80px) auto; padding: 28px; border: 1px solid #cbd5cf; border-radius: 7px; background: #fff; box-shadow: 0 14px 40px rgba(0,0,0,.15); }
@@ -43,6 +48,10 @@ body.page { max-width: none; min-height: 100vh; margin: 0; padding: 0; backgroun
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 15px; }.page-heading .intro { margin-bottom: 0; }.page-admin #calendar { margin-top: 24px; }
 .page-admin .icloud-status { margin: 16px 0 10px; padding: 9px 12px; border: 1px solid #cbded2; background: #f5f9f6; border-radius: 4px; font-size: 13px; }
 .page-admin .icloud-status.error { border-color: #e5c8cd; background: #fff7f8; color: #8f3343; }
+.page-admin .admin-legend { justify-content: flex-start; flex-wrap: wrap; gap: 9px 18px; margin: 8px 0 14px; }
+.page-admin .icloud-work-dot { background: #dce9f7; border-color: #a9c4df; }
+.page-admin .icloud-benji-dot { background: #e8e1f5; border-color: #c5b4e3; }
+.page-admin .icloud-leisure-dot { background: #f9eccf; border-color: #e2c989; }
 .page-admin #saveTimeSlots { border: 1px solid #235a49; background: #286a52; border-radius: 4px; color: #fff; padding: 8px 14px; cursor: pointer; }
 .page-admin #message + #calendar { margin-top: 16px; }
 .page-admin #message:not(:empty) { margin-top: 12px; }
