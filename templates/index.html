@@ -7,216 +7,55 @@
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='erlenmeyer-flask.png') }}">
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css' rel='stylesheet' />
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js'></script>
-    <style>
-        html {
-            background: #ffffff;
-        }
-        body { 
-            font-family: Arial, sans-serif; 
-            max-width: 1400px; 
-            margin: 0 auto; 
-            padding: 20px; 
-            padding-bottom: 100px; /* Adjust this value based on your footer height */
-            background: #ffffff;
-            color: #111111;
-        }
-        #calendar {
-            max-width: 1200px;
-            margin: 20px auto;
-        }
-        .fc-event {
-            cursor: pointer;
-        }
-        .available-slot {
-            background-color: #a8e6cf;
-            border-color: #1b4332;
-        }
-        .booked-slot {
-            background-color: #ffafcc;
-            border-color: #9d0208;
-        }
-        .fc .fc-timegrid-slot {
-            height: 3em;
-        }
-        .fc .fc-timegrid-slot-label {
-            vertical-align: top;
-        }
-        #signupModal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.4);
-        }
-        .modal-content {
-            background-color: #fefefe;
-            margin: 15% auto;
-            padding: 20px;
-            border: 1px solid #888;
-            width: 300px;
-        }
-        .close {
-            color: #aaa;
-            float: right;
-            font-size: 28px;
-            font-weight: bold;
-        }
-        .close:hover,
-        .close:focus {
-            color: black;
-            text-decoration: none;
-            cursor: pointer;
-        }
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.4);
-        }
-        .header-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-        .header-image {
-            width: 50px;  /* Adjust this value as needed */
-            height: auto;
-        }
-        h1 {
-            margin: 0 10px;
-            white-space: nowrap;
-        }
-        .footer-container {
-            display: flex;
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            padding: 20px;
-            background-color: #f8f8f8;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .footer-image {
-            width: 80px;
-            height: auto;
-        }
-        /* Add this new style for the calendar title */
-        .fc-toolbar-title {
-            font-size: 2em !important;
-        }
-        /* Media query for mobile devices */
-        @media (max-width: 768px) {
-            .fc .fc-toolbar {
-                flex-direction: column;
-                gap: 8px;
-            }
-            .fc .fc-toolbar-chunk {
-                display: flex;
-                justify-content: center;
-            }
-            .fc-toolbar-title {
-                font-size: 1.5em !important;
-                text-align: center;
-            }
-            /* New styles for smaller calendar buttons on mobile */
-            .fc-button {
-                font-size: 0.9em !important;
-                padding: 0.2em 0.4em !important;
-            }
-        }
-    </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
 </head>
 <body class="page page-calendar">
     <div class="site-shell">
         <header class="site-header">
-            <a class="brand" href="{{ url_for('index') }}" aria-label="Benji’s supervisions home">
-                <span class="brand-mark" aria-hidden="true">B</span>
-                <span>Benji’s <strong>supervisions</strong></span>
-            </a>
+            <a class="site-name" href="{{ url_for('index') }}">Benji's supervisions</a>
             <nav class="site-nav" aria-label="Main navigation">
-                <a class="nav-link active" href="{{ url_for('index') }}" aria-current="page">Book a slot</a>
-                <a class="nav-link" href="{{ url_for('questions_set') }}">Set work</a>
-                <a class="nav-link" href="{{ url_for('faq') }}">FAQ</a>
+                <a href="{{ url_for('index') }}" aria-current="page">Calendar</a>
+                <a href="{{ url_for('questions_set') }}">Set work</a>
+                <a href="{{ url_for('faq') }}">FAQ</a>
             </nav>
         </header>
-
         <main>
-            <section class="hero hero-calendar">
-                <div>
-                    <p class="eyebrow"><span class="eyebrow-line"></span> Supervision scheduler</p>
-                    <h1 id="headerTitle">Find your next<br><em>supervision.</em></h1>
-                    <p class="hero-copy">Choose an available time in the calendar to sign up. You can book once or repeat your slot until the end of term.</p>
-                    <a class="text-link" href="{{ url_for('questions_set') }}">See this week’s work <span aria-hidden="true">↗</span></a>
-                </div>
-                <div class="hero-note" aria-label="How to book">
-                    <span class="note-number">01 / 02</span>
-                    <span class="note-rule"></span>
-                    <p>Find a green slot<br>that works for your group.</p>
-                    <span class="note-number">02 / 02</span>
-                    <span class="note-rule"></span>
-                    <p>Add everyone’s CRSid<br>and confirm your booking.</p>
-                </div>
-            </section>
-
-            <section class="calendar-panel" aria-labelledby="calendar-heading">
-                <div class="section-heading">
-                    <div>
-                        <p class="eyebrow">Your timetable</p>
-                        <h2 id="calendar-heading">Upcoming slots</h2>
-                    </div>
-                    <div class="calendar-legend" aria-label="Calendar key">
-                        <span><i class="legend-dot available-dot"></i> Available</span>
-                        <span><i class="legend-dot booked-dot"></i> Booked</span>
-                    </div>
-                </div>
-                <div id="calendar"></div>
-                <p class="calendar-help">Select an available slot to sign up. Select a booked slot to see its details.</p>
-            </section>
+            <h1>Supervision signups</h1>
+            <p class="intro">Select an available slot to sign up. Book once or repeat until the end of term.</p>
+            <div class="calendar-legend" aria-label="Calendar key"><span><i class="legend-dot available-dot"></i> Available</span><span><i class="legend-dot booked-dot"></i> Booked</span></div>
+            <div id="calendar"></div>
+            <p class="help-text">Click a booked slot to see its details.</p>
         </main>
-
-        <footer class="site-footer">
-            <span>Benji’s supervisions</span>
-            <span>Made for curious chemists.</span>
-            <a href="https://www.srcf.net/" aria-label="Hosted by SRCF">Hosted by SRCF ↗</a>
+        <footer class="site-footer illustrated-footer">
+            <a href="https://en.wikipedia.org/wiki/Mirex" aria-label="Mirex"><img src="{{ url_for('static', filename='mirex.png') }}" alt="Mirex molecule" class="molecule-image"></a>
+            <a href="https://www.srcf.net/"><img src="https://www.srcf.net/images/poweredby-light-transparent.svg" alt="Powered by SRCF" class="srcf-badge"></a>
+            <a href="https://en.wikipedia.org/wiki/Artemisinin" aria-label="Artemisinin"><img src="{{ url_for('static', filename='artemisinin.png') }}" alt="Artemisinin molecule" class="molecule-image"></a>
         </footer>
     </div>
-
     <div id="signupModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="signupTitle">
         <div class="modal-content">
             <button type="button" class="close" aria-label="Close dialog">&times;</button>
-            <p class="eyebrow">Reserve a place</p>
             <h2 id="signupTitle">Sign up for supervision</h2>
             <form id="signupForm">
-                <div class="booking-summary">
-                    <div><span>Location</span><strong id="supervisionLocation"></strong></div>
-                    <div><span>Time</span><strong id="supervisionTime"></strong></div>
-                    <div><span>Date</span><strong id="supervisionDate"></strong></div>
-                </div>
-                <label class="field-label" for="name">CRSids of everyone in your group</label>
+                <dl class="booking-summary">
+                    <div><dt>Location</dt><dd id="supervisionLocation"></dd></div>
+                    <div><dt>Time</dt><dd id="supervisionTime"></dd></div>
+                    <div><dt>Date</dt><dd id="supervisionDate"></dd></div>
+                </dl>
+                <label for="name">CRSids of everyone in your group</label>
                 <input type="text" id="name" placeholder="e.g. abc123, def456" required>
                 <fieldset class="repeat-options">
-                    <legend>How often?</legend>
+                    <legend>Booking type</legend>
                     <label><input type="radio" name="repeatOption" value="repeat" required> Repeat until the end of term</label>
-                    <label><input type="radio" name="repeatOption" value="oneoff" required> Just this once</label>
+                    <label><input type="radio" name="repeatOption" value="oneoff" required> One-off</label>
                 </fieldset>
-                <button class="primary-button" type="submit">Confirm booking <span aria-hidden="true">→</span></button>
+                <button type="submit">Sign up</button>
             </form>
         </div>
     </div>
     <div id="bookedSlotModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="bookedTitle">
         <div class="modal-content">
             <button type="button" class="close" aria-label="Close dialog">&times;</button>
-            <p class="eyebrow">Slot details</p>
             <h2 id="bookedTitle">Supervision information</h2>
             <p id="bookedSlotInfo"></p>
         </div>

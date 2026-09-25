@@ -5,106 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Questions to attempt</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='erlenmeyer-flask.png') }}">
-    <style>
-        * {
-            -webkit-tap-highlight-color: transparent;
-        }
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f0f0f0;
-            color: #333;
-        }
-        h1 {
-            text-align: center;
-            color: #2c3e50;
-        }
-        .footer-container {
-            display: flex;
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            padding: 20px;
-            background-color: #f8f8f8;
-            justify-content: center;
-            align-items: center;
-        }
-        body {
-            padding-bottom: 60px; 
-        }
-        .collapsible {
-            background-color: #3498db;
-            color: white;
-            cursor: pointer;
-            padding: 18px;
-            width: 100%;
-            border: none;
-            text-align: left;
-            outline: none;
-            transition: background-color 0.3s ease;
-            font-size: 16px;
-            border-radius: 5px;
-            margin-bottom: 5px;
-        }
-        .collapsible:after {
-            content: '\25B6';
-            float: right;
-            margin-left: 5px;
-        }
-        .active:after {
-            content: '\25BC';
-        }
-        .content {
-        padding: 0 18px;
-        max-height: 0;
-        overflow: auto;
-        transition: max-height 0.3s ease-out, padding 0.3s ease-out;
-        padding-top: 0;
-        padding-bottom: 0;
-        }
-        .nested-collapsible {
-            background-color: #ecf0f1;
-            color: #2c3e50;
-        }
-        .nested-collapsible:after {
-            color: #2c3e50;
-        }
-        .part-ia {
-            background-color: #2ecc71;
-        }
-        .part-ib {
-            background-color: #f1c40f;
-        }
-        .part-ii {
-            background-color: #e74c3c;
-        }
-        .part-iii {
-            background-color: #c0392b;
-        }
-    </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
 </head>
 <body class="page page-content page-questions">
     <div class="site-shell">
         <header class="site-header">
-            <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">B</span><span>Benji’s <strong>supervisions</strong></span></a>
+            <a class="site-name" href="{{ url_for('index') }}">Benji's supervisions</a>
             <nav class="site-nav" aria-label="Main navigation">
-                <a class="nav-link" href="{{ url_for('index') }}">Book a slot</a>
-                <a class="nav-link active" href="{{ url_for('questions_set') }}" aria-current="page">Set work</a>
-                <a class="nav-link " href="{{ url_for('faq') }}" >FAQ</a>
+                <a href="{{ url_for('index') }}">Calendar</a>
+                <a href="{{ url_for('questions_set') }}" aria-current="page">Set work</a>
+                <a href="{{ url_for('faq') }}">FAQ</a>
             </nav>
         </header>
         <main class="content-main">
-            <section class="hero hero-compact">
-                <p class="eyebrow"><span class="eyebrow-line"></span> Supervision preparation</p>
-                <h1>Questions to attempt</h1>
-                <p class="hero-copy">Find your course and see what to prepare for your next supervision.</p>
-            </section>
-            <section class="content-panel">
-    
+            <h1>Questions to attempt</h1>
     <button class="collapsible part-ia">Part IA</button>
         <div class="content">
             <button class="collapsible" style="background-color: #17923a;">Michaelmas</button>
@@ -430,9 +344,8 @@
         </div>
     </div>
 
-            </section>
         </main>
-        <footer class="site-footer"><span>Benji’s supervisions</span><span>Made for curious chemists.</span><a href="https://www.srcf.net/">Hosted by SRCF ↗</a></footer>
+        <footer class="site-footer"><a href="https://www.srcf.net/">Hosted by SRCF</a></footer>
     </div>
 
     <script>

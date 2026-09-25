@@ -4,27 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Login</title>
-    <style>
-        html { background: #ffffff; }
-        body { font-family: Arial, sans-serif; max-width: 300px; margin: 0 auto; padding: 20px; background: #ffffff; color: #111111; }
-        input, button { margin: 10px 0; width: 100%; padding: 5px; }
-        .error { color: red; }
-    </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
 </head>
 <body class="page page-login">
     <main class="login-card">
-        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">B</span><span>Benji’s <strong>supervisions</strong></span></a>
-        <p class="eyebrow">Private workspace</p>
-        <h1>Welcome back.</h1>
-        <p class="login-intro">Sign in to manage your supervision calendar.</p>
+        <a class="site-name" href="{{ url_for('index') }}">Benji's supervisions</a>
+        <h1>Admin login</h1>
         {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
         <form method="POST">
-            <label class="field-label" for="password">Password</label>
-            <input id="password" type="password" name="password" placeholder="Enter your password" required>
-            <button class="primary-button" type="submit">Sign in <span aria-hidden="true">→</span></button>
+            <label for="password">Password</label>
+            <input id="password" type="password" name="password" required>
+            <button type="submit">Log in</button>
         </form>
-        <a class="text-link" href="{{ url_for('index') }}">← Back to calendar</a>
+        <p><a href="{{ url_for('index') }}">Back to calendar</a></p>
     </main>
 </body>
 </html>

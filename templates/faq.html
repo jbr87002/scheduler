@@ -5,61 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FAQ - Benji's Supervisions</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='erlenmeyer-flask.png') }}">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        h1 {
-            color: #2c3e50;
-            text-align: center;
-        }
-        .question {
-            font-weight: bold;
-            margin-top: 20px;
-        }
-        .answer {
-            margin-bottom: 20px;
-        }
-        .footer-container {
-            display: flex;
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            padding: 20px;
-            background-color: #f8f8f8;
-            justify-content: center;
-            align-items: center;
-        }
-        body {
-            padding-bottom: 80px; 
-        }
-    </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
 </head>
 <body class="page page-content page-faq">
     <div class="site-shell">
         <header class="site-header">
-            <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">B</span><span>Benji’s <strong>supervisions</strong></span></a>
+            <a class="site-name" href="{{ url_for('index') }}">Benji's supervisions</a>
             <nav class="site-nav" aria-label="Main navigation">
-                <a class="nav-link" href="{{ url_for('index') }}">Book a slot</a>
-                <a class="nav-link " href="{{ url_for('questions_set') }}" >Set work</a>
-                <a class="nav-link active" href="{{ url_for('faq') }}" aria-current="page">FAQ</a>
+                <a href="{{ url_for('index') }}">Calendar</a>
+                <a href="{{ url_for('questions_set') }}">Set work</a>
+                <a href="{{ url_for('faq') }}" aria-current="page">FAQ</a>
             </nav>
         </header>
         <main class="content-main">
-            <section class="hero hero-compact">
-                <p class="eyebrow"><span class="eyebrow-line"></span> Good to know</p>
-                <h1>A little more clarity.</h1>
-                <p class="hero-copy">Guidance on the work, supervisions, and how to get the most from both.</p>
-            </section>
-            <section class="content-panel">
-
+            <h1>Frequently asked questions</h1>
     <div class="question">Q: How long should the work take me?</div>
     <div class="answer"><p>A: The department's guidance for supervisors recommends
     setting around 3 hours of work per subject, per week for IA. Scaling this up
@@ -265,9 +224,8 @@
     </div>
 
 
-            </section>
         </main>
-        <footer class="site-footer"><span>Benji’s supervisions</span><span>Made for curious chemists.</span><a href="https://www.srcf.net/">Hosted by SRCF ↗</a></footer>
+        <footer class="site-footer"><a href="https://www.srcf.net/">Hosted by SRCF</a></footer>
     </div>
 </body>
 </html>

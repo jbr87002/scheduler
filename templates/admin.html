@@ -8,165 +8,25 @@
     <!-- FullCalendar styles and scripts -->
     <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css' rel='stylesheet' />
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js'></script>
-    <style>
-        html {
-            background: #ffffff;
-        }
-        body { 
-            font-family: Arial, sans-serif; 
-            max-width: 1400px; 
-            margin: 0 auto; 
-            padding: 20px; 
-            background: #ffffff;
-            color: #111111;
-        }
-        #calendar {
-            max-width: 1200px;
-            margin: 20px auto;
-        }
-        .fc-event {
-            cursor: pointer;
-        }
-        .available-slot {
-            background-color: #a8e6cf;
-            border-color: #1b4332;
-        }
-        .booked-slot {
-            background-color: #ffafcc;
-            border-color: #9d0208;
-        }
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.4);
-        }
-        .modal-content {
-            background-color: #fefefe;
-            margin: 15% auto;
-            padding: 20px;
-            border: 1px solid #888;
-            width: 80%;
-            max-width: 600px;
-        }
-        .close {
-            color: #aaa;
-            float: right;
-            font-size: 28px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        .close:hover,
-        .close:focus {
-            color: black;
-            text-decoration: none;
-        }
-        #message {
-            margin: 10px auto;
-            max-width: 1200px;
-            padding: 8px 12px;
-        }
-        .status-message {
-            margin-top: 12px;
-            font-size: 0.95em;
-        }
-        .status-message.success {
-            color: #1b4332;
-        }
-        .status-message.error {
-            color: #9d0208;
-        }
-        .status-message.info {
-            color: #1f3b73;
-        }
-        .slot-meta {
-            color: #555;
-            margin: 0 0 8px;
-        }
-        .form-row {
-            display: flex;
-            gap: 12px;
-        }
-        .form-row > div {
-            flex: 1;
-        }
-        .modal-content label {
-            display: block;
-            margin-top: 12px;
-            font-weight: 600;
-        }
-        .modal-content input[type="text"],
-        .modal-content input[type="time"] {
-            width: 100%;
-            padding: 6px;
-            margin-top: 4px;
-            box-sizing: border-box;
-        }
-        .modal-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 16px;
-        }
-        .modal-actions button {
-            padding: 6px 10px;
-        }
-        .hidden {
-            display: none;
-        }
-        @media (max-width: 768px) {
-            .fc .fc-toolbar {
-                flex-direction: column;
-                gap: 8px;
-            }
-            .fc .fc-toolbar-chunk {
-                display: flex;
-                justify-content: center;
-            }
-            .fc-toolbar-title {
-                text-align: center;
-            }
-            .fc-button {
-                font-size: 0.9em !important;
-                padding: 0.2em 0.4em !important;
-            }
-        }
-    </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
 </head>
 <body class="page page-admin">
     <div class="site-shell">
         <header class="site-header">
-            <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">B</span><span>Benji’s <strong>supervisions</strong></span></a>
+            <a class="site-name" href="{{ url_for('index') }}">Benji's supervisions</a>
             <nav class="site-nav" aria-label="Main navigation">
-                <a class="nav-link" href="{{ url_for('index') }}">Public calendar</a>
-                <a class="nav-link" href="{{ url_for('questions_set') }}">Set work</a>
-                <a class="nav-link" href="{{ url_for('admin_logout') }}">Log out</a>
+                <a href="{{ url_for('index') }}">Calendar</a>
+                <a href="{{ url_for('questions_set') }}">Set work</a>
+                <a href="{{ url_for('admin_logout') }}">Log out</a>
             </nav>
         </header>
         <main>
-            <section class="hero hero-compact">
-                <p class="eyebrow"><span class="eyebrow-line"></span> Supervision scheduler</p>
-                <h1>Manage your <em>calendar.</em></h1>
-                <p class="hero-copy">Create slots, update bookings, and keep your timetable in sync.</p>
-            </section>
-            <section class="calendar-panel" aria-label="Admin timetable">
-                <div class="section-heading">
-                    <div><p class="eyebrow">Admin workspace</p><h2>Supervision slots</h2></div>
-                    <button id="exportCalendar" class="secondary-button">Export calendar <span aria-hidden="true">↗</span></button>
-                </div>
-                <div id="message" role="status"></div>
-                <div id="calendar"></div>
-                <p class="calendar-help">Select a time to create a slot, or select an existing slot to edit it.</p>
-            </section>
+            <div class="page-heading"><div><h1>Manage supervisions</h1><p class="intro">Select a time to add a slot, or select an existing slot to edit it.</p></div><button id="exportCalendar">Export calendar</button></div>
+            <div id="message" role="status"></div>
+            <div id="calendar"></div>
         </main>
-        <footer class="site-footer"><span>Benji’s supervisions</span><span>Calendar administration</span><a href="https://www.srcf.net/">Hosted by SRCF ↗</a></footer>
+        <footer class="site-footer"><a href="https://www.srcf.net/">Hosted by SRCF</a></footer>
     </div>
-
     <!-- Export Calendar Modal -->
     <div id="exportModal" class="modal">
         <div class="modal-content">
