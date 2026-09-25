@@ -52,7 +52,14 @@ def check_connection():
     except ICloudUnavailable:
         raise
     except Exception as exc:
-        raise ICloudUnavailable("Could not connect to iCloud Calendar. Check the Apple Account and app-specific password.") from exc
+        if type(exc).__name__ == "AuthorizationError":
+            raise ICloudUnavailable(
+                "Apple rejected the sign-in. Check that the email is your Apple Account "
+                "and that you entered a current app-specific password."
+            ) from exc
+        raise ICloudUnavailable(
+            f"Could not discover iCloud calendars ({type(exc).__name__})."
+        ) from exc
     return CALENDAR_NAMES
 
 
