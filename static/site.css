@@ -150,3 +150,6 @@ body.page {
   .content-panel { border-radius: 14px; }.calendar-panel { border-radius: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+/* Override legacy page-level selectors on the reading pages. */
+.site-nav .nav-link.active::after { content: none !important; }
+.page-content .hero h1 { text-align: left; color: var(--ink); }
