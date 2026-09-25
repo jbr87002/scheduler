@@ -10,15 +10,21 @@
         input, button { margin: 10px 0; width: 100%; padding: 5px; }
         .error { color: red; }
     </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
 </head>
-<body>
-    <h1>Admin Login</h1>
-    {% if error %}
-    <p class="error">{{ error }}</p>
-    {% endif %}
-    <form method="POST">
-        <input type="password" name="password" placeholder="Enter password" required>
-        <button type="submit">Login</button>
-    </form>
+<body class="page page-login">
+    <main class="login-card">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">B</span><span>Benji’s <strong>supervisions</strong></span></a>
+        <p class="eyebrow">Private workspace</p>
+        <h1>Welcome back.</h1>
+        <p class="login-intro">Sign in to manage your supervision calendar.</p>
+        {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+        <form method="POST">
+            <label class="field-label" for="password">Password</label>
+            <input id="password" type="password" name="password" placeholder="Enter your password" required>
+            <button class="primary-button" type="submit">Sign in <span aria-hidden="true">→</span></button>
+        </form>
+        <a class="text-link" href="{{ url_for('index') }}">← Back to calendar</a>
+    </main>
 </body>
 </html>

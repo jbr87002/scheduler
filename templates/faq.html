@@ -40,9 +40,25 @@
             padding-bottom: 80px; 
         }
     </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
 </head>
-<body>
-    <h1>Frequently asked questions</h1>
+<body class="page page-content page-faq">
+    <div class="site-shell">
+        <header class="site-header">
+            <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">B</span><span>Benji’s <strong>supervisions</strong></span></a>
+            <nav class="site-nav" aria-label="Main navigation">
+                <a class="nav-link" href="{{ url_for('index') }}">Book a slot</a>
+                <a class="nav-link " href="{{ url_for('questions_set') }}" >Set work</a>
+                <a class="nav-link active" href="{{ url_for('faq') }}" aria-current="page">FAQ</a>
+            </nav>
+        </header>
+        <main class="content-main">
+            <section class="hero hero-compact">
+                <p class="eyebrow"><span class="eyebrow-line"></span> Good to know</p>
+                <h1>A little more clarity.</h1>
+                <p class="hero-copy">Guidance on the work, supervisions, and how to get the most from both.</p>
+            </section>
+            <section class="content-panel">
 
     <div class="question">Q: How long should the work take me?</div>
     <div class="answer"><p>A: The department's guidance for supervisors recommends
@@ -249,12 +265,9 @@
     </div>
 
 
-    <div class="footer-container" id="footerContainer">
-        <a href="{{ url_for('questions_set') }}">Return to set questions</a>
-        &nbsp;&nbsp;&nbsp;&nbsp;
-        <a href="{{ url_for('index') }}">Return to calendar</a>
-        &nbsp;&nbsp;&nbsp;&nbsp;
-        <a href="https://forms.gle/9wFnfEGK5HrUHBCm9">Questions?</a>
+            </section>
+        </main>
+        <footer class="site-footer"><span>Benji’s supervisions</span><span>Made for curious chemists.</span><a href="https://www.srcf.net/">Hosted by SRCF ↗</a></footer>
     </div>
 </body>
 </html>

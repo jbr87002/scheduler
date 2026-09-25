@@ -136,19 +136,41 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
 </head>
-<body>
-    <h1 style="text-align: center;">Admin</h1>
-    <div id="calendar"></div>
-    <div id="message"></div>
-
-    <!-- Export Calendar button -->
-    <button id="exportCalendar">Export Calendar</button>
+<body class="page page-admin">
+    <div class="site-shell">
+        <header class="site-header">
+            <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true">B</span><span>Benji’s <strong>supervisions</strong></span></a>
+            <nav class="site-nav" aria-label="Main navigation">
+                <a class="nav-link" href="{{ url_for('index') }}">Public calendar</a>
+                <a class="nav-link" href="{{ url_for('questions_set') }}">Set work</a>
+                <a class="nav-link" href="{{ url_for('admin_logout') }}">Log out</a>
+            </nav>
+        </header>
+        <main>
+            <section class="hero hero-compact">
+                <p class="eyebrow"><span class="eyebrow-line"></span> Supervision scheduler</p>
+                <h1>Manage your <em>calendar.</em></h1>
+                <p class="hero-copy">Create slots, update bookings, and keep your timetable in sync.</p>
+            </section>
+            <section class="calendar-panel" aria-label="Admin timetable">
+                <div class="section-heading">
+                    <div><p class="eyebrow">Admin workspace</p><h2>Supervision slots</h2></div>
+                    <button id="exportCalendar" class="secondary-button">Export calendar <span aria-hidden="true">↗</span></button>
+                </div>
+                <div id="message" role="status"></div>
+                <div id="calendar"></div>
+                <p class="calendar-help">Select a time to create a slot, or select an existing slot to edit it.</p>
+            </section>
+        </main>
+        <footer class="site-footer"><span>Benji’s supervisions</span><span>Calendar administration</span><a href="https://www.srcf.net/">Hosted by SRCF ↗</a></footer>
+    </div>
 
     <!-- Export Calendar Modal -->
     <div id="exportModal" class="modal">
         <div class="modal-content">
-            <span class="close">&times;</span>
+            <button type="button" class="close" aria-label="Close dialog">&times;</button>
             <h2>Export Calendar</h2>
             <h3>Add this calendar to your device:</h3>
             <p>Click the link below to automatically add the calendar to your device:</p>
@@ -166,7 +188,7 @@
     <!-- Slot Actions Modal -->
     <div id="slotModal" class="modal">
         <div class="modal-content">
-            <span class="close" id="slotModalClose">&times;</span>
+            <button type="button" class="close" id="slotModalClose" aria-label="Close dialog">&times;</button>
             <h2 id="slotModalTitle">Slot</h2>
             <p id="slotModalMeta" class="slot-meta"></p>
             <form id="slotEditForm">
