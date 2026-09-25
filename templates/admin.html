@@ -21,11 +21,28 @@
             </nav>
         </header>
         <main>
-            <div class="page-heading"><div><h1>Manage supervisions</h1><p class="intro">Select a time to add a slot, or select an existing slot to edit it.</p></div><button id="exportCalendar">Export calendar</button></div>
+            <div class="page-heading"><div><h1>Manage supervisions</h1><p class="intro">Drag across a day to add one-hour slots. Click a slot to edit it.</p></div><button id="exportCalendar">Export calendar</button></div>
+            <div id="icloudStatus" class="icloud-status" role="status">Checking iCloud calendars…</div>
             <div id="message" role="status"></div>
             <div id="calendar"></div>
         </main>
         <footer class="site-footer"><a href="https://www.srcf.net/">Hosted by SRCF</a></footer>
+    </div>
+
+    <div id="blockModal" class="modal">
+        <div class="modal-content">
+            <button type="button" class="close" id="blockModalClose" aria-label="Close dialog">&times;</button>
+            <h2>Add available times</h2>
+            <p id="blockSummary" class="slot-meta"></p>
+            <label for="blockLocation">Location for all slots</label>
+            <input type="text" id="blockLocation" maxlength="200" autocomplete="off">
+            <p class="help-text">Hours with an event in Work, Benji work or Our leisure, or an existing supervision slot, will be skipped.</p>
+            <div id="blockMessage" class="status-message" role="status"></div>
+            <div class="modal-actions">
+                <button id="createBlock" type="button">Add slots</button>
+                <button id="cancelBlock" type="button" class="secondary-button">Cancel</button>
+            </div>
+        </div>
     </div>
     <!-- Export Calendar Modal -->
     <div id="exportModal" class="modal">
@@ -96,6 +113,99 @@
             const slotDeleteRepeatsAction = document.getElementById('slotDeleteRepeatsAction');
             const slotUpdateLocationRepeatsAction = document.getElementById('slotUpdateLocationRepeatsAction');
             const slotCancelAction = document.getElementById('slotCancelAction');
+            const blockModal = document.getElementById('blockModal');
+            const blockSummary = document.getElementById('blockSummary');
+            const blockLocation = document.getElementById('blockLocation');
+            const blockMessage = document.getElementById('blockMessage');
+            const createBlockButton = document.getElementById('createBlock');
+            let selectedBlock = null;
+
+            async function refreshIcloudStatus() {
+                const element = document.getElementById('icloudStatus');
+                try {
+                    const response = await fetch('/api/admin/icloud/status');
+                    const data = await response.json();
+                    element.textContent = data.ready
+                        ? 'iCloud connected: ' + data.calendars.join(', ')
+                        : 'iCloud: ' + data.message;
+                    element.classList.toggle('error', !data.ready);
+                } catch (error) {
+                    element.textContent = 'Could not check iCloud connection.';
+                    element.classList.add('error');
+                }
+            }
+            refreshIcloudStatus();
+
+            function openBlockModal(info) {
+                const start = info.startStr;
+                const end = info.endStr;
+                const startDate = new Date(start);
+                const endDate = new Date(end);
+                const hours = Math.floor((endDate - startDate) / 3600000);
+                if (start.slice(0, 10) !== end.slice(0, 10) || hours < 1 || hours > 12) {
+                    setStatusMessage('Drag across 1 to 12 hours on a single day.', 'error');
+                    return;
+                }
+                // FullCalendar shows Europe/London wall-clock time, including when
+                // its named-timezone fallback serializes a date with a UTC suffix.
+                selectedBlock = { start: start.slice(0, 19), end: end.slice(0, 19) };
+                const ignoredMinutes = Math.round((endDate - startDate) / 60000) % 60;
+                blockSummary.textContent = `${formatDate(start)}, ${formatTime(start)}–${formatTime(end)}: ${hours} one-hour slot${hours === 1 ? '' : 's'}` +
+                    (ignoredMinutes ? ` (${ignoredMinutes} trailing minutes ignored)` : '');
+                blockMessage.textContent = '';
+                blockLocation.value = localStorage.getItem('adminLastLocation') || '';
+                blockModal.style.display = 'block';
+                blockLocation.focus();
+            }
+
+            function closeBlockModal() {
+                blockModal.style.display = 'none';
+                selectedBlock = null;
+            }
+
+            async function createSelectedBlock() {
+                const location = blockLocation.value.trim();
+                if (!location) {
+                    blockMessage.textContent = 'Location is required.';
+                    blockMessage.className = 'status-message error';
+                    return;
+                }
+                createBlockButton.disabled = true;
+                blockMessage.textContent = 'Checking iCloud calendars…';
+                blockMessage.className = 'status-message';
+                try {
+                    const response = await fetch('/api/admin/create_block', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...selectedBlock, location })
+                    });
+                    const data = await response.json();
+                    if (!response.ok || !data.success) {
+                        throw new Error(data.message || 'Could not create slots.');
+                    }
+                    localStorage.setItem('adminLastLocation', location);
+                    closeBlockModal();
+                    calendar.refetchEvents();
+                    let message = `${data.created} one-hour slot${data.created === 1 ? '' : 's'} added.`;
+                    if (data.skipped_icloud || data.skipped_existing) {
+                        message += ` ${data.skipped_icloud} skipped for iCloud events; ${data.skipped_existing} for existing slots.`;
+                    }
+                    if (data.ignored_minutes) {
+                        message += ` ${data.ignored_minutes} trailing minutes ignored.`;
+                    }
+                    setStatusMessage(message, 'success');
+                } catch (error) {
+                    blockMessage.textContent = error.message;
+                    blockMessage.className = 'status-message error';
+                    refreshIcloudStatus();
+                } finally {
+                    createBlockButton.disabled = false;
+                }
+            }
+
+            createBlockButton.onclick = createSelectedBlock;
+            document.getElementById('cancelBlock').onclick = closeBlockModal;
+            document.getElementById('blockModalClose').onclick = closeBlockModal;
 
             let activeEvent = null;
             let activeMode = 'create';
@@ -139,7 +249,7 @@
                     };
                 },
                 select: function(info) {
-                    openSlotModal({ mode: 'create', start: info.startStr, end: info.endStr });
+                    openBlockModal(info);
                     calendar.unselect();
                 },
                 eventClick: function(info) {
@@ -259,9 +369,10 @@
 
             // Add save button
             const saveButton = document.createElement('button');
+            saveButton.id = 'saveTimeSlots';
             saveButton.textContent = 'Save Time Slots';
             saveButton.onclick = saveTimeSlots;
-            document.body.insertBefore(saveButton, document.getElementById('message'));
+            statusMessage.parentNode.insertBefore(saveButton, statusMessage);
 
             function setStatusMessage(text, type) {
                 statusMessage.textContent = text;
@@ -567,6 +678,9 @@
                 }
                 if (event.target == slotModal) {
                     slotModal.style.display = 'none';
+                }
+                if (event.target == blockModal) {
+                    closeBlockModal();
                 }
             }
         });

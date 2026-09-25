@@ -41,6 +41,14 @@ body.page { max-width: none; min-height: 100vh; margin: 0; padding: 0; backgroun
 .page .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }.page .hidden { display: none; }.page .form-row { display: flex; gap: 12px; }.page .form-row > div { flex: 1; }.page .slot-meta, .page .status-message { color: var(--muted); }.page .status-message.error { color: #a33d4b; }.page .status-message.success { color: #286a52; }
 .page #message { margin: 0 0 14px; }.page #message:empty { display: none; }.page #bookedSlotInfo { line-height: 1.9; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 15px; }.page-heading .intro { margin-bottom: 0; }.page-admin #calendar { margin-top: 24px; }
+.page-admin .icloud-status { margin: 16px 0 10px; padding: 9px 12px; border: 1px solid #cbded2; background: #f5f9f6; border-radius: 4px; font-size: 13px; }
+.page-admin .icloud-status.error { border-color: #e5c8cd; background: #fff7f8; color: #8f3343; }
+.page-admin #saveTimeSlots { border: 1px solid #235a49; background: #286a52; border-radius: 4px; color: #fff; padding: 8px 14px; cursor: pointer; }
+.page-admin #message + #calendar { margin-top: 16px; }
+.page-admin #message:not(:empty) { margin-top: 12px; }
+.page-admin #blockModal .help-text { margin: 12px 0; }
+.page-admin .modal-actions .secondary-button { background: #fff; color: var(--text); border-color: #bfcac4; }
+.page-admin button:disabled { opacity: .55; cursor: wait; }
 /* Set work and FAQ */
 .content-main { max-width: 880px; width: 100%; margin: 0 auto; }.content-main h1 { margin-bottom: 26px; }
 .page-questions .collapsible { display: block; width: 100%; background: #447e6b; color: white; border: 0; border-radius: 4px; padding: 13px 16px; margin: 7px 0; text-align: left; font-weight: 600; cursor: pointer; }

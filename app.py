@@ -28,6 +28,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import hmac
 from dateutil.parser import isoparse
+from icloud_availability import (
+    CALENDAR_NAMES, ICloudUnavailable, busy_intervals, check_connection,
+    configured as icloud_configured, overlaps as overlaps_icloud,
+)
 
 load_dotenv()  # This line loads the variables from .env
 
@@ -307,6 +311,20 @@ def signup():
     slot_location = timeslot.location
     slot_duration = slot_end - slot_start
 
+    repeat_occurrences = (
+        list(_repeated_occurrences(slot_start, slot_duration, end_of_term))
+        if repeat else []
+    )
+    if icloud_configured():
+        try:
+            all_occurrences = [(slot_start, slot_end), *repeat_occurrences]
+            busy = busy_intervals(slot_start, max(end for _, end in all_occurrences))
+        except ICloudUnavailable:
+            app.logger.warning('Booking paused because iCloud availability could not be checked')
+            return jsonify({'success': False, 'message': 'Calendar availability could not be checked. Please try again later.'}), 503
+        if any(overlaps_icloud(start, end, busy) for start, end in all_occurrences):
+            return jsonify({'success': False, 'message': 'This time conflicts with a calendar event. Please choose another slot.'}), 409
+
     try:
         # Atomic transition: only one request can book an available slot.
         update_result = db.session.execute(
@@ -328,11 +346,6 @@ def signup():
             app.logger.warning(f"Failed to book slot {slot_id}: Slot already booked")
             return jsonify({'success': False, 'message': 'Time slot not available or invalid'}), 409
 
-        repeat_occurrences = (
-            list(_repeated_occurrences(slot_start, slot_duration, end_of_term))
-            if repeat
-            else []
-        )
         if repeat_occurrences:
             conflict_filters = [
                 (TimeSlot.start_time < repeated_end) & (TimeSlot.end_time > repeated_start)
@@ -398,6 +411,92 @@ def signup():
         db.session.rollback()
         app.logger.error(f"Database error: {str(e)}")
         return jsonify({'success': False, 'message': 'An error occurred while booking the slot'}), 500
+
+@app.route('/api/admin/icloud/status', methods=['GET'])
+@admin_required
+def icloud_status():
+    if not icloud_configured():
+        return jsonify({
+            'ready': False,
+            'calendars': CALENDAR_NAMES,
+            'message': 'iCloud is not connected yet.',
+        })
+    try:
+        check_connection()
+        return jsonify({
+            'ready': True,
+            'calendars': CALENDAR_NAMES,
+            'message': 'iCloud calendars connected.',
+        })
+    except ICloudUnavailable as exc:
+        app.logger.warning('iCloud connection check failed: %s', type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__)
+        return jsonify({'ready': False, 'calendars': CALENDAR_NAMES, 'message': str(exc)})
+
+
+@app.route('/api/admin/create_block', methods=['POST'])
+@admin_required
+def create_block():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'success': False, 'message': 'Request body must be an object.'}), 400
+    try:
+        start = _parse_local_datetime(payload.get('start'), 'start')
+        end = _parse_local_datetime(payload.get('end'), 'end')
+        location = _normalize_location(payload)
+        if not location:
+            raise ValueError('Location is required.')
+        if start.date() != end.date() or end <= start:
+            raise ValueError('Select a block within one day.')
+        if start.minute % 30 or end.minute % 30 or start.second or end.second:
+            raise ValueError('Block times must use half-hour increments.')
+        count = int((end - start) // timedelta(hours=1))
+        if count < 1 or count > 12:
+            raise ValueError('Select between 1 and 12 hours.')
+        if start < datetime.now(london_tz).replace(tzinfo=None):
+            raise ValueError('Select a future time.')
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+
+    try:
+        busy = busy_intervals(start, end)
+    except ICloudUnavailable as exc:
+        app.logger.warning('iCloud availability check failed: %s', type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__)
+        return jsonify({'success': False, 'message': str(exc)}), 503
+
+    candidates = [(start + timedelta(hours=i), start + timedelta(hours=i + 1)) for i in range(count)]
+    existing = TimeSlot.query.filter(
+        TimeSlot.start_time < candidates[-1][1],
+        TimeSlot.end_time > start,
+    ).all()
+    created = []
+    skipped_icloud = 0
+    skipped_existing = 0
+    for slot_start, slot_end in candidates:
+        if overlaps_icloud(slot_start, slot_end, busy):
+            skipped_icloud += 1
+        elif any(slot_start < slot.end_time and slot_end > slot.start_time for slot in existing):
+            skipped_existing += 1
+        else:
+            new_slot = TimeSlot(
+                start_time=slot_start, end_time=slot_end,
+                is_available=True, location=location,
+            )
+            db.session.add(new_slot)
+            created.append(new_slot)
+    try:
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception('Could not create availability block')
+        return jsonify({'success': False, 'message': 'Could not save the slots.'}), 500
+    return jsonify({
+        'success': True,
+        'created': len(created),
+        'skipped_icloud': skipped_icloud,
+        'skipped_existing': skipped_existing,
+        'ignored_minutes': int(((end - start) % timedelta(hours=1)).total_seconds() // 60),
+    })
+
 
 @app.route('/api/admin/set_timeslots', methods=['POST'])
 @admin_required

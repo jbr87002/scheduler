@@ -18,3 +18,4 @@ psycopg2-binary==2.9.9
 flask-talisman==1.0.0
 Flask-Migrate==4.0.4
 gunicorn
+caldav==3.3.1
