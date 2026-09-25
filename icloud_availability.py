@@ -2,11 +2,19 @@
 
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
+from collections import OrderedDict
 import os
+from threading import Lock
+import time as clock
 
 
 LONDON = ZoneInfo("Europe/London")
 CALENDAR_NAMES = ("Work", "Benji work", "Our leisure")
+_event_cache = OrderedDict()
+_event_cache_lock = Lock()
+_CACHE_MAX_AGE_SECONDS = 3600
+_CACHE_FALLBACK_SECONDS = 300
+_CACHE_MAX_RANGES = 12
 
 
 class ICloudUnavailable(Exception):
@@ -115,39 +123,97 @@ def busy_intervals(start, end):
     return intervals
 
 
+def _calendar_events_from(calendars, window_start, window_end):
+    result = []
+    for calendar_name, calendar in calendars.items():
+        for event in calendar.search(
+            start=window_start, end=window_end, event=True, expand=True
+        ):
+            component = event.get_icalendar_component()
+            interval = _event_interval(component, include_transparent=True)
+            if not interval or interval[0] >= window_end or interval[1] <= window_start:
+                continue
+            all_day = isinstance(component["DTSTART"].dt, date) and not isinstance(
+                component["DTSTART"].dt, datetime
+            )
+            start_value, end_value = interval
+            result.append({
+                "title": str(component.get("SUMMARY") or "(Untitled event)"),
+                "start": start_value.date().isoformat() if all_day else start_value.isoformat(),
+                "end": end_value.date().isoformat() if all_day else end_value.isoformat(),
+                "allDay": all_day,
+                "calendar": calendar_name,
+                "location": str(component.get("LOCATION") or ""),
+                "free": str(component.get("TRANSP", "")).upper() == "TRANSPARENT",
+            })
+    return result
+
+
 def calendar_events(start, end):
-    """Return the selected calendars' events for the authenticated admin view."""
+    """Read the selected calendars' events afresh for the authenticated admin view."""
     window_start = start.replace(tzinfo=LONDON)
     window_end = end.replace(tzinfo=LONDON)
-    result = []
     try:
         with _client() as client:
-            for calendar_name, calendar in _selected_calendars(client).items():
-                for event in calendar.search(
-                    start=window_start, end=window_end, event=True, expand=True
-                ):
-                    component = event.get_icalendar_component()
-                    interval = _event_interval(component, include_transparent=True)
-                    if not interval or interval[0] >= window_end or interval[1] <= window_start:
-                        continue
-                    all_day = isinstance(component["DTSTART"].dt, date) and not isinstance(
-                        component["DTSTART"].dt, datetime
-                    )
-                    start_value, end_value = interval
-                    result.append({
-                        "title": str(component.get("SUMMARY") or "(Untitled event)"),
-                        "start": start_value.date().isoformat() if all_day else start_value.isoformat(),
-                        "end": end_value.date().isoformat() if all_day else end_value.isoformat(),
-                        "allDay": all_day,
-                        "calendar": calendar_name,
-                        "location": str(component.get("LOCATION") or ""),
-                        "free": str(component.get("TRANSP", "")).upper() == "TRANSPARENT",
-                    })
+            return _calendar_events_from(_selected_calendars(client), window_start, window_end)
     except ICloudUnavailable:
         raise
     except Exception as exc:
         raise ICloudUnavailable("Could not read iCloud events.") from exc
-    return result
+
+
+def _calendar_sync_tokens(calendars):
+    """A cheap per-calendar change check; None means no usable tokens."""
+    from caldav.elements import dav
+
+    tokens = []
+    for name in CALENDAR_NAMES:
+        try:
+            token = calendars[name].get_property(dav.SyncToken())
+        except Exception:
+            return None
+        if not token:
+            return None
+        tokens.append((name, str(token)))
+    return tuple(tokens)
+
+
+def cached_calendar_events(start, end):
+    """Reuse event data until a sync token changes or the cache ages out.
+
+    The cache is process-local. Booking and block creation keep their live
+    iCloud checks and never use this display cache.
+    """
+    window_start = start.replace(tzinfo=LONDON)
+    window_end = end.replace(tzinfo=LONDON)
+    key = (window_start.isoformat(), window_end.isoformat())
+    with _event_cache_lock:
+        try:
+            with _client() as client:
+                calendars = _selected_calendars(client)
+                tokens = _calendar_sync_tokens(calendars)
+                entry = _event_cache.get(key)
+                age = clock.monotonic() - entry["fetched_at"] if entry else float("inf")
+                if entry and (
+                    (tokens is not None and tokens == entry["tokens"] and age < _CACHE_MAX_AGE_SECONDS)
+                    or (tokens is None and entry["tokens"] is None and age < _CACHE_FALLBACK_SECONDS)
+                ):
+                    _event_cache.move_to_end(key)
+                    return [dict(event) for event in entry["events"]]
+                events = _calendar_events_from(calendars, window_start, window_end)
+                _event_cache[key] = {
+                    "tokens": tokens,
+                    "fetched_at": clock.monotonic(),
+                    "events": events,
+                }
+                _event_cache.move_to_end(key)
+                while len(_event_cache) > _CACHE_MAX_RANGES:
+                    _event_cache.popitem(last=False)
+                return [dict(event) for event in events]
+        except ICloudUnavailable:
+            raise
+        except Exception as exc:
+            raise ICloudUnavailable("Could not read iCloud events.") from exc
 
 
 def overlaps(start, end, intervals):

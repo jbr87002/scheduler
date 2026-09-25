@@ -128,21 +128,13 @@
             const createBlockButton = document.getElementById('createBlock');
             let selectedBlock = null;
 
-            async function refreshIcloudStatus() {
+            function setIcloudStatus(ready, message) {
                 const element = document.getElementById('icloudStatus');
-                try {
-                    const response = await fetch('/api/admin/icloud/status');
-                    const data = await response.json();
-                    element.textContent = data.ready
-                        ? 'iCloud connected: ' + data.calendars.join(', ')
-                        : 'iCloud: ' + data.message;
-                    element.classList.toggle('error', !data.ready);
-                } catch (error) {
-                    element.textContent = 'Could not check iCloud connection.';
-                    element.classList.add('error');
-                }
+                element.textContent = ready
+                    ? 'iCloud connected: Work, Benji work, Our leisure'
+                    : 'iCloud: ' + message;
+                element.classList.toggle('error', !ready);
             }
-            refreshIcloudStatus();
 
             function openBlockModal(info) {
                 const start = info.startStr;
@@ -205,7 +197,9 @@
                 } catch (error) {
                     blockMessage.textContent = error.message;
                     blockMessage.className = 'status-message error';
-                    refreshIcloudStatus();
+                    if (/icloud|calendar/i.test(error.message)) {
+                        setIcloudStatus(false, error.message);
+                    }
                 } finally {
                     createBlockButton.disabled = false;
                 }
@@ -326,6 +320,7 @@
                             })
                             .then(data => {
                                 document.getElementById('icloudEventMessage').textContent = '';
+                                setIcloudStatus(true);
                                 const classes = {
                                     'Work': 'icloud-work',
                                     'Benji work': 'icloud-benji',
@@ -348,6 +343,7 @@
                             })
                             .catch(error => {
                                 document.getElementById('icloudEventMessage').textContent = error.message;
+                                setIcloudStatus(false, error.message);
                                 failureCallback(error);
                             });
                     }

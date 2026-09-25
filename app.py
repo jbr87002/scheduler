@@ -29,7 +29,7 @@ from email.mime.multipart import MIMEMultipart
 import hmac
 from dateutil.parser import isoparse
 from icloud_availability import (
-    CALENDAR_NAMES, ICloudUnavailable, busy_intervals, calendar_events, check_connection,
+    CALENDAR_NAMES, ICloudUnavailable, busy_intervals, cached_calendar_events, check_connection,
     configured as icloud_configured, overlaps as overlaps_icloud,
 )
 
@@ -446,7 +446,7 @@ def icloud_events():
     except ValueError as exc:
         return jsonify({'message': str(exc)}), 400
     try:
-        events = calendar_events(start, end)
+        events = cached_calendar_events(start, end)
     except ICloudUnavailable as exc:
         app.logger.warning('iCloud events could not be read: %s', type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__)
         return jsonify({'message': str(exc)}), 503

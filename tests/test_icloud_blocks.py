@@ -92,7 +92,7 @@ def test_icloud_feed_is_admin_only_and_never_appears_on_public_timetable(monkeyp
         "end": "2099-06-01T10:00:00+01:00", "allDay": False,
         "calendar": "Work", "location": "Office", "free": False,
     }
-    monkeypatch.setattr("app.calendar_events", lambda start, end: [sample])
+    monkeypatch.setattr("app.cached_calendar_events", lambda start, end: [sample])
     client = app.test_client()
     url = "/api/admin/icloud/events?start=2099-06-01&end=2099-06-08"
     assert client.get(url, base_url="https://localhost").status_code == 401
@@ -171,3 +171,49 @@ def test_icloud_events_include_all_day_and_free_events_but_not_cancellations(mon
     assert events[1]["end"] == "2099-06-03"
     assert events[2]["free"] is True
     assert len(icloud_availability.busy_intervals(start, end)) == 2
+
+
+def test_admin_display_cache_checks_tokens_before_refetching(monkeypatch):
+    search_count = [0]
+
+    class FakeCalendar:
+        def __init__(self, name):
+            self.name = name
+            self.token = "first"
+
+        def get_display_name(self):
+            return self.name
+
+        def get_property(self, property):
+            return self.token
+
+        def search(self, **kwargs):
+            search_count[0] += 1
+            return []
+
+    calendars = [FakeCalendar(name) for name in icloud_availability.CALENDAR_NAMES]
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def principal(self):
+            return self
+
+        def calendars(self):
+            return calendars
+
+    monkeypatch.setattr(icloud_availability, "_client", FakeClient)
+    icloud_availability._event_cache.clear()
+    start, end = datetime(2099, 6, 1), datetime(2099, 6, 8)
+    assert icloud_availability.cached_calendar_events(start, end) == []
+    assert search_count[0] == 3
+    assert icloud_availability.cached_calendar_events(start, end) == []
+    assert search_count[0] == 3
+    calendars[0].token = "changed"
+    assert icloud_availability.cached_calendar_events(start, end) == []
+    assert search_count[0] == 6
+    icloud_availability._event_cache.clear()
