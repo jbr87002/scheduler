@@ -36,10 +36,24 @@ Public:
 - `GET /api/health`
 
 Admin (requires either admin session cookie OR `Authorization: Bearer $ADMIN_API_TOKEN`):
-- `POST /api/admin/set_timeslots`
-- `DELETE /api/admin/delete_timeslot/<id>`
-- `POST /api/admin/change_location/<id>`
+- `GET /api/admin/slots?start=&end=` — slots in a range, each with a `version`
+- `POST /api/admin/slots/block` — add one-hour available slots across a block, skipping iCloud clashes (`/api/admin/create_block` still works)
+- `PATCH /api/admin/slots/<id>` — `{version, start_time?, end_time?, location?, scope?}`
+- `DELETE /api/admin/slots/<id>?version=N&scope=this|following`
 - `POST /api/admin/book_supervision`
+- Legacy, no version check: `DELETE /api/admin/delete_timeslot/<id>`, `POST /api/admin/change_location/<id>`
+
+Every admin change is saved individually. `PATCH` and `DELETE` must send the
+`version` the client last saw; if the slot has changed since (for example a
+student booked it), the server returns `409` and writes nothing.
+`scope=following` applies to this slot and later slots of the same repeating
+booking (`series_id`). The old bulk `POST /api/admin/set_timeslots` returns `410`.
+
+Only timed iCloud events that aren't marked free block new slots; all-day
+events never do. Discovered calendar URLs are cached for 6 hours.
+
+New columns (`series_id`, `version`) are added automatically at startup by
+`upgrade_schema()`, which also groups existing repeating bookings into series.
 
 ### Book Supervision
 

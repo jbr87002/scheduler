@@ -68,47 +68,11 @@ def test_repeating_signup_rejects_future_booked_conflict(monkeypatch):
         ]
 
 
-def test_admin_save_does_not_delete_rows_omitted_from_stale_calendar_snapshot():
-    with app.app_context():
-        db.session.add_all(
-            [
-                TimeSlot(
-                    start_time=datetime(2026, 2, 2, 14),
-                    end_time=datetime(2026, 2, 2, 15),
-                    is_available=True,
-                    location="A",
-                ),
-                TimeSlot(
-                    start_time=datetime(2026, 2, 3, 14),
-                    end_time=datetime(2026, 2, 3, 15),
-                    is_available=False,
-                    name="late booking",
-                    location="B",
-                ),
-            ]
-        )
-        db.session.commit()
-
+def test_bulk_save_endpoint_is_retired():
     response = app.test_client().post(
         "/api/admin/set_timeslots",
-        json=[
-            {
-                "id": "1",
-                "start_time": "2026-02-02T14:00:00",
-                "end_time": "2026-02-02T15:00:00",
-                "is_available": True,
-                "location": "A",
-                "name": None,
-            }
-        ],
+        json=[],
         headers=_admin_headers(),
         base_url="https://localhost",
     )
-
-    assert response.status_code == 200
-    with app.app_context():
-        slots = TimeSlot.query.order_by(TimeSlot.id).all()
-        assert [(s.id, s.name, s.location) for s in slots] == [
-            (1, None, "A"),
-            (2, "late booking", "B"),
-        ]
+    assert response.status_code == 410

@@ -21,7 +21,7 @@
             </nav>
         </header>
         <main>
-            <div class="page-heading"><div><h1>Manage supervisions</h1><p class="intro">Drag across a day to add one-hour slots. Click a slot to edit it.</p></div><button id="exportCalendar">Export calendar</button></div>
+            <div class="page-heading"><div><h1>Manage supervisions</h1><p class="intro">Drag across a day to add one-hour slots. Drag a slot to move it, or click it to edit. Changes save automatically.</p></div><button id="exportCalendar">Export calendar</button></div>
             <div id="icloudStatus" class="icloud-status" role="status">Checking iCloud calendars…</div>
             <div class="calendar-legend admin-legend" aria-label="Calendar colours">
                 <span><i class="legend-dot available-dot"></i>Available</span>
@@ -31,11 +31,12 @@
                 <span><i class="legend-dot icloud-leisure-dot"></i>Our leisure</span>
             </div>
             <div id="icloudEventMessage" class="status-message error" role="status"></div>
-            <div id="message" role="status"></div>
             <div id="calendar"></div>
         </main>
         <footer class="site-footer"><a href="https://www.srcf.net/">Hosted by SRCF</a></footer>
     </div>
+
+    <div id="message" role="status" aria-live="polite"></div>
 
     <div id="blockModal" class="modal">
         <div class="modal-content">
@@ -44,7 +45,7 @@
             <p id="blockSummary" class="slot-meta"></p>
             <label for="blockLocation">Location for all slots</label>
             <input type="text" id="blockLocation" maxlength="200" autocomplete="off">
-            <p class="help-text">Hours with an event in Work, Benji work or Our leisure, or an existing supervision slot, will be skipped.</p>
+            <p class="help-text">Hours that clash with a timed event in Work, Benji work or Our leisure, or with an existing slot, are skipped. All-day events and events marked free don't block slots.</p>
             <div id="blockMessage" class="status-message" role="status"></div>
             <div class="modal-actions">
                 <button id="createBlock" type="button">Add slots</button>
@@ -104,12 +105,11 @@
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             let calendar;
-            var supervisionStartDate = new Date("{{ supervision_start_date }}");
-            var today = new Date();
+            const supervisionStartDate = new Date("{{ supervision_start_date }}");
+            const today = new Date();
             today.setHours(0, 0, 0, 0);
             const statusMessage = document.getElementById('message');
             const slotModal = document.getElementById('slotModal');
-            const slotModalClose = document.getElementById('slotModalClose');
             const slotModalTitle = document.getElementById('slotModalTitle');
             const slotModalMeta = document.getElementById('slotModalMeta');
             const slotModalMessage = document.getElementById('slotModalMessage');
@@ -120,13 +120,88 @@
             const slotDeleteAction = document.getElementById('slotDeleteAction');
             const slotDeleteRepeatsAction = document.getElementById('slotDeleteRepeatsAction');
             const slotUpdateLocationRepeatsAction = document.getElementById('slotUpdateLocationRepeatsAction');
-            const slotCancelAction = document.getElementById('slotCancelAction');
             const blockModal = document.getElementById('blockModal');
             const blockSummary = document.getElementById('blockSummary');
             const blockLocation = document.getElementById('blockLocation');
             const blockMessage = document.getElementById('blockMessage');
             const createBlockButton = document.getElementById('createBlock');
+            const exportModal = document.getElementById('exportModal');
             let selectedBlock = null;
+            let activeEvent = null;
+            let messageTimer = null;
+
+            // ---- Server calls -------------------------------------------------
+            // Every change is saved as soon as it is made. The server refuses
+            // edits based on an out-of-date view (409), e.g. if a student booked
+            // the slot meanwhile; the calendar then reloads from the server.
+
+            class ApiError extends Error {
+                constructor(message, status) {
+                    super(message);
+                    this.status = status;
+                }
+            }
+
+            async function api(method, url, body) {
+                const options = { method, headers: {} };
+                if (body !== undefined) {
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(body);
+                }
+                let response;
+                try {
+                    response = await fetch(url, options);
+                } catch (error) {
+                    throw new ApiError('Could not reach the server. Check your connection and try again.', 0);
+                }
+                let data = {};
+                try {
+                    data = await response.json();
+                } catch (error) {
+                    // Non-JSON error page (e.g. a proxy timeout); fall through to the status check.
+                }
+                if (response.status === 401) {
+                    window.location.href = "{{ url_for('admin_login') }}";
+                    throw new ApiError('Your session has expired. Please log in again.', 401);
+                }
+                if (!response.ok || data.success === false) {
+                    throw new ApiError(data.message || `The server returned an error (${response.status}).`, response.status);
+                }
+                return data;
+            }
+
+            function handleApiError(error) {
+                setStatusMessage(error.message, 'error');
+                if (error.status === 404 || error.status === 409) {
+                    calendar.refetchEvents();
+                }
+            }
+
+            // FullCalendar renders Europe/London wall-clock time; the server
+            // stores naive London times, so send the first 19 characters.
+            function wallClock(value) {
+                const match = value && value.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+                if (!match) {
+                    throw new Error(`Unexpected datetime format: ${value}`);
+                }
+                return match[0];
+            }
+
+            // ---- Messages ---------------------------------------------------
+
+            function setStatusMessage(text, type) {
+                clearTimeout(messageTimer);
+                statusMessage.textContent = text;
+                statusMessage.className = 'status-message' + (type ? ` ${type}` : '');
+                if (text) {
+                    messageTimer = setTimeout(() => setStatusMessage('', ''), type === 'error' ? 12000 : 6000);
+                }
+            }
+
+            function setModalMessage(text, type) {
+                slotModalMessage.textContent = text;
+                slotModalMessage.className = 'status-message' + (type ? ` ${type}` : '');
+            }
 
             function setIcloudStatus(ready, message) {
                 const element = document.getElementById('icloudStatus');
@@ -135,6 +210,71 @@
                     : 'iCloud: ' + message;
                 element.classList.toggle('error', !ready);
             }
+
+            function formatDate(value) {
+                const match = typeof value === 'string' && value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+            }
+
+            function formatTime(value) {
+                const match = typeof value === 'string' && value.match(/T(\d{2}:\d{2})/);
+                return match ? match[1] : '';
+            }
+
+            function plural(count, word) {
+                return `${count} ${word}${count === 1 ? '' : 's'}`;
+            }
+
+            // ---- Calendar events --------------------------------------------
+
+            function slotToEvent(slot) {
+                return {
+                    id: String(slot.id),
+                    title: slotTitle(slot),
+                    start: slot.start_time,
+                    end: slot.end_time,
+                    className: slot.is_available ? 'available-slot' : 'booked-slot',
+                    extendedProps: {
+                        kind: 'slot',
+                        location: slot.location,
+                        is_available: slot.is_available,
+                        name: slot.name,
+                        seriesId: slot.series_id,
+                        version: slot.version
+                    }
+                };
+            }
+
+            function slotTitle(slot) {
+                return slot.is_available ? 'Available: ' + slot.location : `${slot.name} (${slot.location})`;
+            }
+
+            function applySlot(event, slot) {
+                event.setExtendedProp('version', slot.version);
+                event.setExtendedProp('location', slot.location);
+                event.setProp('title', slotTitle(slot));
+            }
+
+            async function saveMove(info) {
+                const event = info.event;
+                event.setProp('editable', false);
+                try {
+                    const data = await api('PATCH', `/api/admin/slots/${event.id}`, {
+                        version: event.extendedProps.version,
+                        start_time: wallClock(event.startStr),
+                        end_time: wallClock(event.endStr)
+                    });
+                    applySlot(event, data.slot);
+                    setStatusMessage(`Saved: ${formatDate(event.startStr)}, ${formatTime(event.startStr)}–${formatTime(event.endStr)}.`, 'success');
+                } catch (error) {
+                    info.revert();
+                    handleApiError(error);
+                } finally {
+                    event.setProp('editable', true);
+                }
+            }
+
+            // ---- Adding a block of one-hour slots ----------------------------
 
             function openBlockModal(info) {
                 const start = info.startStr;
@@ -146,14 +286,16 @@
                     setStatusMessage('Drag across 1 to 12 hours on a single day.', 'error');
                     return;
                 }
-                // FullCalendar shows Europe/London wall-clock time, including when
-                // its named-timezone fallback serializes a date with a UTC suffix.
-                selectedBlock = { start: start.slice(0, 19), end: end.slice(0, 19) };
+                selectedBlock = { start: wallClock(start), end: wallClock(end) };
                 const ignoredMinutes = Math.round((endDate - startDate) / 60000) % 60;
-                blockSummary.textContent = `${formatDate(start)}, ${formatTime(start)}–${formatTime(end)}: ${hours} one-hour slot${hours === 1 ? '' : 's'}` +
+                blockSummary.textContent = `${formatDate(start)}, ${formatTime(start)}–${formatTime(end)}: ${plural(hours, 'one-hour slot')}` +
                     (ignoredMinutes ? ` (${ignoredMinutes} trailing minutes ignored)` : '');
                 blockMessage.textContent = '';
-                blockLocation.value = localStorage.getItem('adminLastLocation') || '';
+                try {
+                    blockLocation.value = localStorage.getItem('adminLastLocation') || '';
+                } catch (error) {
+                    blockLocation.value = '';
+                }
                 blockModal.style.display = 'block';
                 blockLocation.focus();
             }
@@ -171,33 +313,32 @@
                     return;
                 }
                 createBlockButton.disabled = true;
-                blockMessage.textContent = 'Checking iCloud calendars…';
+                blockMessage.textContent = 'Checking your calendars…';
                 blockMessage.className = 'status-message';
                 try {
-                    const response = await fetch('/api/admin/create_block', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ...selectedBlock, location })
-                    });
-                    const data = await response.json();
-                    if (!response.ok || !data.success) {
-                        throw new Error(data.message || 'Could not create slots.');
+                    const data = await api('POST', '/api/admin/slots/block', { ...selectedBlock, location });
+                    try {
+                        localStorage.setItem('adminLastLocation', location);
+                    } catch (error) {
+                        // Remembering the location is a convenience only.
                     }
-                    localStorage.setItem('adminLastLocation', location);
                     closeBlockModal();
-                    calendar.refetchEvents();
-                    let message = `${data.created} one-hour slot${data.created === 1 ? '' : 's'} added.`;
-                    if (data.skipped_icloud || data.skipped_existing) {
-                        message += ` ${data.skipped_icloud} skipped for iCloud events; ${data.skipped_existing} for existing slots.`;
+                    data.slots.forEach(slot => calendar.addEvent(slotToEvent(slot), 'slots'));
+                    let message = `${plural(data.created, 'slot')} added.`;
+                    if (data.skipped.length) {
+                        const reasons = { calendar: 'calendar event', existing: 'existing slot' };
+                        message += ' Skipped ' + data.skipped
+                            .map(s => `${formatTime('T' + s.start_time.slice(11))}–${formatTime('T' + s.end_time.slice(11))} (${reasons[s.reason]})`)
+                            .join(', ') + '.';
                     }
                     if (data.ignored_minutes) {
                         message += ` ${data.ignored_minutes} trailing minutes ignored.`;
                     }
-                    setStatusMessage(message, 'success');
+                    setStatusMessage(message, data.created ? 'success' : 'error');
                 } catch (error) {
                     blockMessage.textContent = error.message;
                     blockMessage.className = 'status-message error';
-                    if (/icloud|calendar/i.test(error.message)) {
+                    if (error.status === 503) {
                         setIcloudStatus(false, error.message);
                     }
                 } finally {
@@ -206,25 +347,146 @@
             }
 
             createBlockButton.onclick = createSelectedBlock;
+            blockLocation.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter') {
+                    createSelectedBlock();
+                }
+            });
             document.getElementById('cancelBlock').onclick = closeBlockModal;
             document.getElementById('blockModalClose').onclick = closeBlockModal;
 
-            let activeEvent = null;
-            let activeMode = 'create';
-            let activeCreateStart = null;
+            // ---- Editing one slot -------------------------------------------
 
-            // Get view and date from localStorage or URL parameters
-            const storedView = localStorage.getItem('adminCalendarView');
-            const storedDate = localStorage.getItem('adminCalendarDate');
+            function openSlotModal(event) {
+                activeEvent = event;
+                const isBooked = !event.extendedProps.is_available;
+                const inSeries = !!event.extendedProps.seriesId;
+                setModalMessage('', '');
+                slotModalTitle.textContent = isBooked ? 'Edit booked slot' : 'Edit available slot';
+                slotModalMeta.textContent = formatDate(event.startStr) +
+                    (isBooked ? ` - Booked by ${event.extendedProps.name || 'Student'}` : '');
+                slotLocationInput.value = event.extendedProps.location || '';
+                slotStartInput.value = formatTime(event.startStr);
+                slotEndInput.value = formatTime(event.endStr);
+                slotDeleteRepeatsAction.classList.toggle('hidden', !inSeries);
+                slotUpdateLocationRepeatsAction.classList.toggle('hidden', !inSeries);
+                setModalButtonsDisabled(false);
+                slotModal.style.display = 'block';
+            }
+
+            function closeSlotModal() {
+                slotModal.style.display = 'none';
+                activeEvent = null;
+            }
+
+            function setModalButtonsDisabled(disabled) {
+                [slotPrimaryAction, slotDeleteAction, slotDeleteRepeatsAction, slotUpdateLocationRepeatsAction]
+                    .forEach(button => { button.disabled = disabled; });
+            }
+
+            async function runModalAction(action) {
+                setModalButtonsDisabled(true);
+                setModalMessage('Saving…', '');
+                try {
+                    await action();
+                    closeSlotModal();
+                } catch (error) {
+                    setModalMessage(error.message, 'error');
+                    if (error.status === 404 || error.status === 409) {
+                        calendar.refetchEvents();
+                    }
+                } finally {
+                    setModalButtonsDisabled(false);
+                }
+            }
+
+            function modalLocation() {
+                const location = slotLocationInput.value.trim();
+                if (!location) {
+                    throw new ApiError('Location is required.', 400);
+                }
+                return location;
+            }
+
+            function modalTime(input) {
+                const match = input.value.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+                if (!match) {
+                    throw new ApiError('Please enter times as HH:MM in 24-hour format.', 400);
+                }
+                if (Number(match[2]) % 5 !== 0) {
+                    throw new ApiError('Please use 5-minute increments.', 400);
+                }
+                return `${activeEvent.startStr.slice(0, 10)}T${match[1].padStart(2, '0')}:${match[2]}:00`;
+            }
+
+            slotPrimaryAction.onclick = () => runModalAction(async () => {
+                const event = activeEvent;
+                const location = modalLocation();
+                const startTime = modalTime(slotStartInput);
+                const endTime = modalTime(slotEndInput);
+                if (endTime <= startTime) {
+                    throw new ApiError('End time must be after start time.', 400);
+                }
+                const data = await api('PATCH', `/api/admin/slots/${event.id}`, {
+                    version: event.extendedProps.version,
+                    start_time: startTime,
+                    end_time: endTime,
+                    location
+                });
+                event.setDates(data.slot.start_time, data.slot.end_time);
+                applySlot(event, data.slot);
+                setStatusMessage('Slot saved.', 'success');
+            });
+
+            slotUpdateLocationRepeatsAction.onclick = () => runModalAction(async () => {
+                const data = await api('PATCH', `/api/admin/slots/${activeEvent.id}`, {
+                    version: activeEvent.extendedProps.version,
+                    location: modalLocation(),
+                    scope: 'following'
+                });
+                calendar.refetchEvents();
+                setStatusMessage(`Location updated for ${plural(data.updated, 'slot')}.`, 'success');
+            });
+
+            async function deleteActive(scope) {
+                const event = activeEvent;
+                const booked = !event.extendedProps.is_available;
+                const question = scope === 'following'
+                    ? `Delete this and all later supervisions for ${event.extendedProps.name}?`
+                    : `Delete the supervision booked by ${event.extendedProps.name}?`;
+                if ((booked || scope === 'following') && !window.confirm(question)) {
+                    throw new ApiError('Nothing was deleted.', 0);
+                }
+                const params = new URLSearchParams({ version: event.extendedProps.version, scope });
+                const data = await api('DELETE', `/api/admin/slots/${event.id}?${params}`);
+                if (scope === 'following') {
+                    calendar.refetchEvents();
+                } else {
+                    event.remove();
+                }
+                setStatusMessage(`${plural(data.deleted, 'slot')} deleted.`, 'success');
+            }
+
+            slotDeleteAction.onclick = () => runModalAction(() => deleteActive('this'));
+            slotDeleteRepeatsAction.onclick = () => runModalAction(() => deleteActive('following'));
+            document.getElementById('slotModalClose').onclick = closeSlotModal;
+            document.getElementById('slotCancelAction').onclick = closeSlotModal;
+
+            // ---- Calendar ---------------------------------------------------
+
+            let storedView = null;
+            let storedDate = null;
+            try {
+                storedView = localStorage.getItem('adminCalendarView');
+                storedDate = localStorage.getItem('adminCalendarDate');
+            } catch (error) {
+                // Private browsing: fall back to the defaults below.
+            }
             const urlParams = new URLSearchParams(window.location.search);
             const viewParam = urlParams.get('view') || storedView || 'timeGridWeek';
             const dateParam = urlParams.get('date') || storedDate || supervisionStartDate.toISOString();
 
-            console.log('Initial admin view:', viewParam);
-            console.log('Initial admin date:', dateParam);
-
-            // Initialize FullCalendar
-            var calendarEl = document.getElementById('calendar');
+            const calendarEl = document.getElementById('calendar');
             calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: viewParam,
                 initialDate: new Date(dateParam),
@@ -245,21 +507,22 @@
                 selectMirror: true,
                 selectAllow: function(info) { return !info.allDay; },
                 editable: true,
-                eventOverlap: false,
-                validRange: function(nowDate) {
-                    return {
-                        start: today
-                    };
+                eventOverlap: function(stillEvent, movingEvent) {
+                    // Slots may sit on top of iCloud events (the server checks
+                    // those), but never on top of another slot.
+                    return stillEvent.extendedProps.kind === 'icloud';
+                },
+                validRange: function() {
+                    return { start: today };
                 },
                 select: function(info) {
                     openBlockModal(info);
                     calendar.unselect();
                 },
                 eventClick: function(info) {
-                    if (info.event.extendedProps.kind === 'icloud') {
-                        return;
+                    if (info.event.extendedProps.kind === 'slot') {
+                        openSlotModal(info.event);
                     }
-                    openSlotModal({ mode: 'edit', event: info.event });
                 },
                 eventDidMount: function(info) {
                     if (info.event.extendedProps.kind === 'icloud') {
@@ -268,56 +531,31 @@
                             (details.location ? `\n${details.location}` : '');
                     }
                 },
-                eventDrop: function(info) {
-                    // Handle event drag and drop
-                    console.log('Event moved:', info.event);
-                    setStatusMessage('Slot moved. Remember to save.', 'info');
-                },
-                eventResize: function(info) {
-                    // Handle event resize
-                    console.log('Event resized:', info.event);
-                    setStatusMessage('Slot resized. Remember to save.', 'info');
-                },
-                events: function(fetchInfo, successCallback, failureCallback) {
-                    // Fetch events for the calendar
-                    fetch('/api/get_timeslots')
-                        .then(response => response.json())
-                        .then(data => {
-                            const events = data.map(slot => ({
-                                id: slot.id,
-                                title: slot.is_available ? 'Available: ' + slot.location : `${slot.name} (${slot.location})`,
-                                start: slot.start_time,
-                                end: slot.end_time,
-                                className: slot.is_available ? 'available-slot' : 'booked-slot',
-                                extendedProps: {
-                                    location: slot.location,
-                                    is_available: slot.is_available,
-                                    name: slot.name,
-                                    isRepeated: slot.is_repeated
-                                }
-                            }));
-                            successCallback(events);
-                        })
-                        .catch(error => {
-                            console.error('Error fetching events:', error);
-                            failureCallback(error);
-                        });
-                },
+                eventDrop: saveMove,
+                eventResize: saveMove,
                 eventSources: [{
-                    id: 'icloud',
+                    id: 'slots',
                     events: function(fetchInfo, successCallback, failureCallback) {
                         const params = new URLSearchParams({
                             start: fetchInfo.startStr.slice(0, 19),
                             end: fetchInfo.endStr.slice(0, 19)
                         });
-                        fetch(`/api/admin/icloud/events?${params}`, { cache: 'no-store' })
-                            .then(async response => {
-                                const data = await response.json();
-                                if (!response.ok) {
-                                    throw new Error(data.message || 'Could not load iCloud events.');
-                                }
-                                return data;
-                            })
+                        api('GET', `/api/admin/slots?${params}`)
+                            .then(data => successCallback(data.map(slotToEvent)))
+                            .catch(error => {
+                                setStatusMessage('Could not load slots: ' + error.message, 'error');
+                                failureCallback(error);
+                            });
+                    }
+                }, {
+                    id: 'icloud',
+                    editable: false,
+                    events: function(fetchInfo, successCallback, failureCallback) {
+                        const params = new URLSearchParams({
+                            start: fetchInfo.startStr.slice(0, 19),
+                            end: fetchInfo.endStr.slice(0, 19)
+                        });
+                        api('GET', `/api/admin/icloud/events?${params}`)
                             .then(data => {
                                 document.getElementById('icloudEventMessage').textContent = '';
                                 setIcloudStatus(true);
@@ -331,7 +569,6 @@
                                     start: event.start,
                                     end: event.end,
                                     allDay: event.allDay,
-                                    editable: false,
                                     classNames: ['icloud-event', classes[event.calendar], event.free ? 'icloud-free' : ''].filter(Boolean),
                                     extendedProps: {
                                         kind: 'icloud',
@@ -349,398 +586,43 @@
                     }
                 }],
                 datesSet: function(info) {
-                    console.log('Admin view changed:', info.view.type);
-                    console.log('Admin date changed:', info.start.toISOString());
-                    localStorage.setItem('adminCalendarView', info.view.type);
-                    localStorage.setItem('adminCalendarDate', info.start.toISOString());
+                    try {
+                        localStorage.setItem('adminCalendarView', info.view.type);
+                        localStorage.setItem('adminCalendarDate', info.start.toISOString());
+                    } catch (error) {
+                        // Remembering the view is a convenience only.
+                    }
                 }
             });
             calendar.render();
-            console.log('Admin calendar after render:', calendar.view.type, calendar.getDate());
 
-            // Save time slots
-            function saveTimeSlots() {
-                saveButton.disabled = true;
-                const events = calendar.getEvents().filter(event => event.extendedProps.kind !== 'icloud');
-                const toApiDateTime = (event, fieldName) => {
-                    const rawValue = fieldName === 'start' ? event.startStr : event.endStr;
-                    if (!rawValue) {
-                        throw new Error(`Event ${event.id || '(new)'} is missing ${fieldName} time`);
-                    }
+            // ---- Export dialog and closing dialogs --------------------------
 
-                    const match = rawValue.match(
-                        /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/
-                    );
-                    if (!match) {
-                        throw new Error(`Unexpected ${fieldName} datetime format: ${rawValue}`);
-                    }
-                    // Send Europe/London wall-clock values as naive datetimes.
-                    return match[1];
-                };
-
-                let slots;
-                try {
-                    slots = events.map(event => ({
-                        id: event.id,
-                        start_time: toApiDateTime(event, 'start'),
-                        end_time: toApiDateTime(event, 'end'),
-                        is_available: event.extendedProps.is_available,
-                        location: event.extendedProps.location,
-                        name: event.extendedProps.name
-                    }));
-                } catch (error) {
-                    console.error('Error preparing slots for save:', error);
-                    setStatusMessage(`Failed to prepare slot data: ${error.message}`, 'error');
-                    saveButton.disabled = false;
-                    return;
-                }
-
-                console.log('Saving slots:', slots);  // Debug log
-
-                fetch('/api/admin/set_timeslots', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(slots)
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        setStatusMessage(data.message || 'Time slots saved successfully!', 'success');
-                        console.log('Before refetch:', calendar.view.type, calendar.getDate());
-                        calendar.removeAllEvents();
-                        calendar.refetchEvents();
-                        console.log('After refetch:', calendar.view.type, calendar.getDate());
-                    } else {
-                        setStatusMessage('Failed to save time slots: ' + (data.message || ''), 'error');
-                        console.error('Error details:', data.message);
-                    }
-                    saveButton.disabled = false;
-                })
-                .catch((error) => {
-                    console.error('Error:', error);
-                    setStatusMessage('An unexpected error occurred: ' + error.message, 'error');
-                    saveButton.disabled = false;
-                });
-            }
-
-            // Add save button
-            const saveButton = document.createElement('button');
-            saveButton.id = 'saveTimeSlots';
-            saveButton.textContent = 'Save Time Slots';
-            saveButton.onclick = saveTimeSlots;
-            statusMessage.parentNode.insertBefore(saveButton, statusMessage);
-
-            function setStatusMessage(text, type) {
-                statusMessage.textContent = text;
-                statusMessage.className = 'status-message' + (type ? ` ${type}` : '');
-            }
-
-            function setModalMessage(text, type) {
-                slotModalMessage.textContent = text;
-                slotModalMessage.className = 'status-message' + (type ? ` ${type}` : '');
-            }
-
-            function setTimeInputStep(minutes) {
-                const stepValue = String(minutes * 60);
-                slotStartInput.step = stepValue;
-                slotEndInput.step = stepValue;
-            }
-
-            function formatDate(date) {
-                if (!date) {
-                    return '';
-                }
-                if (typeof date === 'string') {
-                    const match = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
-                    if (match) {
-                        return `${match[3]}/${match[2]}/${match[1]}`;
-                    }
-                    return '';
-                }
-                return date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-            }
-
-            function snapToInterval(date, intervalMinutes) {
-                const snapped = new Date(date);
-                const totalMinutes = snapped.getHours() * 60 + snapped.getMinutes();
-                const snappedTotal = Math.round(totalMinutes / intervalMinutes) * intervalMinutes;
-                snapped.setHours(Math.floor(snappedTotal / 60));
-                snapped.setMinutes(snappedTotal % 60, 0, 0);
-                return snapped;
-            }
-
-            function formatTime(date) {
-                if (typeof date === 'string') {
-                    const match = date.match(/T(\d{2}:\d{2})/);
-                    return match ? match[1] : '';
-                }
-                const hours = String(date.getHours()).padStart(2, '0');
-                const minutes = String(date.getMinutes()).padStart(2, '0');
-                return `${hours}:${minutes}`;
-            }
-
-            function formatEventTime(event, fieldName) {
-                const value = fieldName === 'start' ? event.startStr : event.endStr;
-                const match = value && value.match(/T(\d{2}:\d{2})/);
-                if (match) {
-                    return match[1];
-                }
-                const fallback = fieldName === 'start' ? event.start : event.end;
-                return fallback ? formatTime(fallback) : '';
-            }
-
-            function eventDatePart(event) {
-                const value = event && (event.startStr || event.start);
-                if (!value) {
-                    return null;
-                }
-                if (typeof value === 'string') {
-                    return value.slice(0, 10);
-                }
-                const year = value.getFullYear();
-                const month = String(value.getMonth() + 1).padStart(2, '0');
-                const day = String(value.getDate()).padStart(2, '0');
-                return `${year}-${month}-${day}`;
-            }
-
-            function parseTimeOnDate(datePart, timeString) {
-                if (!datePart) {
-                    return null;
-                }
-                const match = timeString.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
-                if (!match) {
-                    return null;
-                }
-                return `${datePart}T${match[1].padStart(2, '0')}:${match[2]}:00`;
-            }
-
-            function openSlotModal({ mode, event, start, end }) {
-                activeMode = mode;
-                activeEvent = event || null;
-                activeCreateStart = start || null;
-                setModalMessage('', '');
-
-                const isBooked = event ? !event.extendedProps.is_available : false;
-                const isRepeated = event ? !!event.extendedProps.isRepeated : false;
-                const baseDate = event ? event.start : start;
-                const effectiveEnd = event ? (event.end || new Date(event.start.getTime() + 30 * 60000)) : end;
-
-                slotModalTitle.textContent = mode === 'create'
-                    ? 'Create available slot'
-                    : (isBooked ? 'Edit booked slot' : 'Edit available slot');
-
-                if (baseDate) {
-                    slotModalMeta.textContent = formatDate(baseDate);
-                    if (isBooked) {
-                        const bookedBy = event.extendedProps.name || 'Student';
-                        slotModalMeta.textContent += ` - Booked by ${bookedBy}`;
-                    }
-                } else {
-                    slotModalMeta.textContent = '';
-                }
-
-                slotLocationInput.value = mode === 'create' ? '' : (event.extendedProps.location || '');
-                slotStartInput.value = event ? formatEventTime(event, 'start') : (baseDate ? formatTime(baseDate) : '');
-                slotEndInput.value = event ? formatEventTime(event, 'end') : (effectiveEnd ? formatTime(effectiveEnd) : '');
-
-                setTimeInputStep(mode === 'create' ? 30 : 5);
-
-                slotPrimaryAction.textContent = mode === 'create' ? 'Create slot' : 'Save changes';
-                slotDeleteAction.classList.toggle('hidden', mode === 'create');
-                slotDeleteRepeatsAction.classList.toggle('hidden', !(mode === 'edit' && isBooked && isRepeated));
-                slotUpdateLocationRepeatsAction.classList.toggle('hidden', !(mode === 'edit' && isBooked && isRepeated));
-
-                slotModal.style.display = 'block';
-            }
-
-            function closeSlotModal() {
-                slotModal.style.display = 'none';
-                activeEvent = null;
-                activeCreateStart = null;
-            }
-
-            function handleSlotPrimaryAction() {
-                const location = slotLocationInput.value.trim();
-                if (!location) {
-                    setModalMessage('Location is required.', 'error');
-                    return;
-                }
-
-                const datePart = activeEvent ? eventDatePart(activeEvent) : eventDatePart({ start: activeCreateStart });
-                const startValue = parseTimeOnDate(datePart, slotStartInput.value);
-                const endValue = parseTimeOnDate(datePart, slotEndInput.value);
-                if (!startValue || !endValue) {
-                    setModalMessage('Please enter times as HH:MM in 24-hour format.', 'error');
-                    return;
-                }
-
-                const stepMinutes = activeMode === 'create' ? 30 : 5;
-                const startMinutes = Number(slotStartInput.value.split(':')[1]);
-                const endMinutes = Number(slotEndInput.value.split(':')[1]);
-                if (startMinutes % stepMinutes !== 0 || endMinutes % stepMinutes !== 0) {
-                    const stepLabel = stepMinutes === 30 ? '30' : '5';
-                    setModalMessage(`Please use ${stepLabel}-minute increments.`, 'error');
-                    return;
-                }
-
-                if (endValue <= startValue) {
-                    setModalMessage('End time must be after start time.', 'error');
-                    return;
-                }
-
-                if (activeMode === 'create') {
-                    let tempId = 'temp_' + new Date().getTime();
-                    calendar.addEvent({
-                        id: tempId,
-                        title: 'Available: ' + location,
-                        start: startValue,
-                        end: endValue,
-                        className: 'available-slot',
-                        extendedProps: {
-                            location: location,
-                            is_available: true
-                        }
-                    });
-                    setStatusMessage('Slot created. Remember to save.', 'info');
-                } else if (activeEvent) {
-                    activeEvent.setStart(startValue);
-                    activeEvent.setEnd(endValue);
-                    activeEvent.setExtendedProp('location', location);
-                    if (activeEvent.extendedProps.is_available) {
-                        activeEvent.setProp('title', 'Available: ' + location);
-                    } else {
-                        const name = activeEvent.extendedProps.name || 'Booked';
-                        activeEvent.setProp('title', `${name} (${location})`);
-                    }
-                    setStatusMessage('Slot updated. Remember to save.', 'info');
-                }
-
-                closeSlotModal();
-            }
-
-            function handleSlotDelete(deleteSubsequent) {
-                if (!activeEvent) {
-                    closeSlotModal();
-                    return;
-                }
-                if (activeEvent.extendedProps.is_available) {
-                    if (String(activeEvent.id).startsWith('temp_')) {
-                        activeEvent.remove();
-                        setStatusMessage('Slot removed.', 'success');
-                    } else {
-                        deleteBookedSlot(activeEvent.id, false);
-                    }
-                    closeSlotModal();
-                    return;
-                }
-                deleteBookedSlot(activeEvent.id, deleteSubsequent);
-                closeSlotModal();
-            }
-
-            function handleUpdateLocationRepeats() {
-                if (!activeEvent) {
-                    closeSlotModal();
-                    return;
-                }
-                const location = slotLocationInput.value.trim();
-                if (!location) {
-                    setModalMessage('Location is required.', 'error');
-                    return;
-                }
-                changeSlotLocation(activeEvent.id, location, true);
-                closeSlotModal();
-            }
-
-            slotPrimaryAction.onclick = handleSlotPrimaryAction;
-            slotDeleteAction.onclick = function() {
-                handleSlotDelete(false);
-            };
-            slotDeleteRepeatsAction.onclick = function() {
-                handleSlotDelete(true);
-            };
-            slotUpdateLocationRepeatsAction.onclick = handleUpdateLocationRepeats;
-            slotModalClose.onclick = closeSlotModal;
-            slotCancelAction.onclick = closeSlotModal;
-
-            function deleteBookedSlot(slotId, deleteSubsequent) {
-                fetch(`/api/admin/delete_timeslot/${slotId}?delete_subsequent=${deleteSubsequent}`, {
-                    method: 'DELETE'
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        if (deleteSubsequent) {
-                            calendar.refetchEvents();
-                        } else {
-                            const event = calendar.getEventById(String(slotId));
-                            if (event) {
-                                event.remove();
-                            }
-                        }
-                        setStatusMessage('Slot(s) deleted successfully!', 'success');
-                    } else {
-                        setStatusMessage('Failed to delete slot(s): ' + data.message, 'error');
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    setStatusMessage('An error occurred while deleting the slot(s).', 'error');
-                });
-            }
-
-            function changeSlotLocation(slotId, newLocation, updateSubsequent) {
-                fetch(`/api/admin/change_location/${slotId}`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        location: newLocation,
-                        update_subsequent: updateSubsequent
-                    })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        calendar.refetchEvents();  // Reload all events to reflect changes
-                        setStatusMessage('Location changed successfully!', 'success');
-                    } else {
-                        setStatusMessage('Failed to change location: ' + data.message, 'error');
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    setStatusMessage('An error occurred while changing the location.', 'error');
-                });
-            }
-
-            // Export Calendar Modal functionality
-            const exportButton = document.getElementById('exportCalendar');
-            const exportModal = document.getElementById('exportModal');
-            const closeExportModal = exportModal.getElementsByClassName('close')[0];
-
-            exportButton.onclick = function() {
+            document.getElementById('exportCalendar').onclick = function() {
                 exportModal.style.display = 'block';
-            }
-
-            closeExportModal.onclick = function() {
+            };
+            exportModal.getElementsByClassName('close')[0].onclick = function() {
                 exportModal.style.display = 'none';
-            }
+            };
 
-            // Close modal when clicking outside of it
             window.onclick = function(event) {
-                if (event.target == exportModal) {
+                if (event.target === exportModal) {
                     exportModal.style.display = 'none';
                 }
-                if (event.target == slotModal) {
-                    slotModal.style.display = 'none';
+                if (event.target === slotModal) {
+                    closeSlotModal();
                 }
-                if (event.target == blockModal) {
+                if (event.target === blockModal) {
                     closeBlockModal();
                 }
-            }
+            };
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape') {
+                    exportModal.style.display = 'none';
+                    closeSlotModal();
+                    closeBlockModal();
+                }
+            });
         });
     </script>
 </body>

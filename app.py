@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from zoneinfo import ZoneInfo
-from sqlalchemy import func, or_
+from sqlalchemy import or_, inspect as sa_inspect
+from sqlalchemy.orm.exc import StaleDataError
 import uuid
 from flask import send_file, make_response
 import logging
@@ -115,6 +116,12 @@ def _parse_local_datetime(value, field_name: str) -> datetime:
     if dt.tzinfo is not None:
         dt = dt.astimezone(london_tz).replace(tzinfo=None)
     return dt
+
+def _parse_range_param(value, field_name: str) -> datetime:
+    """Accept a bare date (midnight) or a datetime, as FullCalendar sends either."""
+    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()):
+        return datetime.fromisoformat(value.strip())
+    return _parse_local_datetime(value, field_name)
 
 def _normalize_booking_name(payload: dict) -> str:
     students = payload.get("students")
@@ -225,6 +232,26 @@ class TimeSlot(db.Model):
     name = db.Column(db.String(100))
     location = db.Column(db.String(200))
     is_repeated = db.Column(db.Boolean, default=False)
+    # Links the weekly copies of one repeating booking.
+    series_id = db.Column(db.String(36), index=True)
+    # Optimistic locking: SQLAlchemy bumps this on every ORM update and refuses
+    # to write over a row someone else changed in the meantime.
+    version = db.Column(db.Integer, nullable=False, default=1, server_default="1")
+
+    __mapper_args__ = {"version_id_col": version}
+
+    def to_json(self):
+        return {
+            'id': self.id,
+            'start_time': self.start_time.isoformat(),
+            'end_time': self.end_time.isoformat(),
+            'is_available': self.is_available,
+            'name': self.name,
+            'location': self.location,
+            'is_repeated': self.is_repeated,
+            'series_id': self.series_id,
+            'version': self.version,
+        }
 
 class Admin(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -325,18 +352,21 @@ def signup():
         if any(overlaps_icloud(start, end, busy) for start, end in all_occurrences):
             return jsonify({'success': False, 'message': 'This time conflicts with a calendar event. Please choose another slot.'}), 409
 
+    series_id = str(uuid.uuid4()) if repeat else None
     try:
         # Atomic transition: only one request can book an available slot.
         update_result = db.session.execute(
             text(
                 "UPDATE time_slot "
-                "SET is_available = :is_available, name = :name, is_repeated = :is_repeated "
+                "SET is_available = :is_available, name = :name, is_repeated = :is_repeated, "
+                "series_id = :series_id, version = version + 1 "
                 "WHERE id = :id AND is_available = :expected_available"
             ),
             {
                 "is_available": False,
                 "name": name,
                 "is_repeated": repeat,
+                "series_id": series_id,
                 "id": slot_id,
                 "expected_available": True,
             }
@@ -380,20 +410,15 @@ def signup():
         if repeat:
             app.logger.info(f"Creating repeated slots for {name}")
             for repeated_start, repeated_end in repeat_occurrences:
-                db.session.execute(
-                    text(
-                        "INSERT INTO time_slot (start_time, end_time, is_available, name, location, is_repeated) "
-                        "VALUES (:start_time, :end_time, :is_available, :name, :location, :is_repeated)"
-                    ),
-                    {
-                        "start_time": repeated_start,
-                        "end_time": repeated_end,
-                        "is_available": False,
-                        "name": name,
-                        "location": slot_location,
-                        "is_repeated": True,
-                    }
-                )
+                db.session.add(TimeSlot(
+                    start_time=repeated_start,
+                    end_time=repeated_end,
+                    is_available=False,
+                    name=name,
+                    location=slot_location,
+                    is_repeated=True,
+                    series_id=series_id,
+                ))
                 app.logger.debug(f"Created repeated slot: {repeated_start} - {repeated_end}")
 
         db.session.commit()
@@ -437,10 +462,8 @@ def icloud_status():
 @admin_required
 def icloud_events():
     try:
-        start_raw = request.args.get('start')
-        end_raw = request.args.get('end')
-        start = datetime.fromisoformat(start_raw) if start_raw and re.fullmatch(r'\d{4}-\d{2}-\d{2}', start_raw) else _parse_local_datetime(start_raw, 'start')
-        end = datetime.fromisoformat(end_raw) if end_raw and re.fullmatch(r'\d{4}-\d{2}-\d{2}', end_raw) else _parse_local_datetime(end_raw, 'end')
+        start = _parse_range_param(request.args.get('start'), 'start')
+        end = _parse_range_param(request.args.get('end'), 'end')
         if end <= start or end - start > timedelta(days=62):
             raise ValueError('Select a date range of up to 62 days.')
     except ValueError as exc:
@@ -456,12 +479,77 @@ def icloud_events():
     return response
 
 
+STALE_MESSAGE = 'This slot changed since you loaded the page (perhaps a student just booked it). The calendar has been refreshed.'
+
+
+def _error(message, status, **extra):
+    return jsonify({'success': False, 'message': message, **extra}), status
+
+
+def _following_in_series(slot):
+    """This slot plus later slots of the same repeating booking."""
+    if not slot.series_id:
+        return [slot]
+    # Compare in Python: older SQLite rows store datetimes in a different text
+    # format, which breaks >= comparisons in SQL.
+    series = TimeSlot.query.filter(TimeSlot.series_id == slot.series_id).all()
+    return sorted(
+        (s for s in series if s.start_time >= slot.start_time),
+        key=lambda s: s.start_time,
+    )
+
+
+def _parse_scope(value):
+    scope = value or 'this'
+    if scope not in ('this', 'following'):
+        raise ValueError("Field 'scope' must be 'this' or 'following'")
+    return scope
+
+
+def _parse_version(value):
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError("Field 'version' (integer) is required")
+    return value
+
+
+def _commit_or_error(log_message):
+    try:
+        db.session.commit()
+    except StaleDataError:
+        db.session.rollback()
+        return _error(STALE_MESSAGE, 409)
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception(log_message)
+        return _error('Could not save the change. Nothing was modified.', 500)
+    return None
+
+
+@app.route('/api/admin/slots', methods=['GET'])
+@admin_required
+def list_slots():
+    query = TimeSlot.query
+    try:
+        if request.args.get('start'):
+            query = query.filter(TimeSlot.end_time > _parse_range_param(request.args['start'], 'start'))
+        if request.args.get('end'):
+            query = query.filter(TimeSlot.start_time < _parse_range_param(request.args['end'], 'end'))
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    response = jsonify([slot.to_json() for slot in query.order_by(TimeSlot.start_time).all()])
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+
+@app.route('/api/admin/slots/block', methods=['POST'])
 @app.route('/api/admin/create_block', methods=['POST'])
 @admin_required
 def create_block():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
-        return jsonify({'success': False, 'message': 'Request body must be an object.'}), 400
+        return _error('Request body must be an object.', 400)
     try:
         start = _parse_local_datetime(payload.get('start'), 'start')
         end = _parse_local_datetime(payload.get('end'), 'end')
@@ -478,13 +566,13 @@ def create_block():
         if start < datetime.now(london_tz).replace(tzinfo=None):
             raise ValueError('Select a future time.')
     except ValueError as exc:
-        return jsonify({'success': False, 'message': str(exc)}), 400
+        return _error(str(exc), 400)
 
     try:
         busy = busy_intervals(start, end)
     except ICloudUnavailable as exc:
         app.logger.warning('iCloud availability check failed: %s', type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__)
-        return jsonify({'success': False, 'message': str(exc)}), 503
+        return _error(str(exc), 503)
 
     candidates = [(start + timedelta(hours=i), start + timedelta(hours=i + 1)) for i in range(count)]
     existing = TimeSlot.query.filter(
@@ -492,13 +580,12 @@ def create_block():
         TimeSlot.end_time > start,
     ).all()
     created = []
-    skipped_icloud = 0
-    skipped_existing = 0
+    skipped = []
     for slot_start, slot_end in candidates:
         if overlaps_icloud(slot_start, slot_end, busy):
-            skipped_icloud += 1
+            reason = 'calendar'
         elif any(slot_start < slot.end_time and slot_end > slot.start_time for slot in existing):
-            skipped_existing += 1
+            reason = 'existing'
         else:
             new_slot = TimeSlot(
                 start_time=slot_start, end_time=slot_end,
@@ -506,111 +593,118 @@ def create_block():
             )
             db.session.add(new_slot)
             created.append(new_slot)
-    try:
-        db.session.commit()
-    except SQLAlchemyError:
-        db.session.rollback()
-        app.logger.exception('Could not create availability block')
-        return jsonify({'success': False, 'message': 'Could not save the slots.'}), 500
+            continue
+        skipped.append({
+            'start_time': slot_start.isoformat(),
+            'end_time': slot_end.isoformat(),
+            'reason': reason,
+        })
+    error = _commit_or_error('Could not create availability block')
+    if error:
+        return error
+    app.logger.info(f"Created {len(created)} slot(s) from block {start}–{end}; skipped {len(skipped)}")
     return jsonify({
         'success': True,
         'created': len(created),
-        'skipped_icloud': skipped_icloud,
-        'skipped_existing': skipped_existing,
+        'slots': [slot.to_json() for slot in created],
+        'skipped': skipped,
+        'skipped_icloud': sum(1 for s in skipped if s['reason'] == 'calendar'),
+        'skipped_existing': sum(1 for s in skipped if s['reason'] == 'existing'),
         'ignored_minutes': int(((end - start) % timedelta(hours=1)).total_seconds() // 60),
     })
+
+
+@app.route('/api/admin/slots/<int:slot_id>', methods=['PATCH'])
+@admin_required
+def update_slot(slot_id):
+    """Move, resize or relocate one slot (or relocate the rest of its series).
+
+    The client sends the version it last saw; a mismatch means the slot
+    changed underneath it (e.g. a student booked it) and nothing is written.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _error('Request body must be an object.', 400)
+    slot = db.session.get(TimeSlot, slot_id)
+    if not slot:
+        return _error('This slot no longer exists. The calendar has been refreshed.', 404)
+    try:
+        version = _parse_version(payload.get('version'))
+        scope = _parse_scope(payload.get('scope'))
+        start = _parse_local_datetime(payload['start_time'], 'start_time') if 'start_time' in payload else slot.start_time
+        end = _parse_local_datetime(payload['end_time'], 'end_time') if 'end_time' in payload else slot.end_time
+        location = _normalize_location(payload) if 'location' in payload else slot.location
+        if end <= start:
+            raise ValueError('End time must be after start time.')
+        if start.date() != end.date():
+            raise ValueError('A slot must start and end on the same day.')
+        times_changed = (start, end) != (slot.start_time, slot.end_time)
+        if scope == 'following' and times_changed:
+            raise ValueError('Times can only be changed one slot at a time.')
+    except ValueError as exc:
+        return _error(str(exc), 400)
+
+    if version != slot.version:
+        return _error(STALE_MESSAGE, 409, slot=slot.to_json())
+
+    if times_changed:
+        clash = TimeSlot.query.filter(
+            TimeSlot.id != slot.id,
+            TimeSlot.start_time < end,
+            TimeSlot.end_time > start,
+        ).first()
+        if clash:
+            return _error('That time overlaps another slot.', 409)
+        if slot.is_available and icloud_configured():
+            try:
+                busy = busy_intervals(start, end)
+            except ICloudUnavailable as exc:
+                return _error(str(exc), 503)
+            if overlaps_icloud(start, end, busy):
+                return _error('That time clashes with an event in your calendar.', 409)
+
+    targets = _following_in_series(slot) if scope == 'following' else [slot]
+    slot.start_time = start
+    slot.end_time = end
+    for target in targets:
+        target.location = location
+    error = _commit_or_error(f'Could not update slot {slot_id}')
+    if error:
+        return error
+    app.logger.info(f"Updated slot {slot_id} ({len(targets)} slot(s) affected)")
+    return jsonify({'success': True, 'slot': slot.to_json(), 'updated': len(targets)})
+
+
+@app.route('/api/admin/slots/<int:slot_id>', methods=['DELETE'])
+@admin_required
+def delete_slot(slot_id):
+    slot = db.session.get(TimeSlot, slot_id)
+    if not slot:
+        return _error('This slot no longer exists. The calendar has been refreshed.', 404)
+    try:
+        version = _parse_version(request.args.get('version'))
+        scope = _parse_scope(request.args.get('scope'))
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    if version != slot.version:
+        return _error(STALE_MESSAGE, 409, slot=slot.to_json())
+
+    targets = _following_in_series(slot) if scope == 'following' else [slot]
+    for target in targets:
+        db.session.delete(target)
+    error = _commit_or_error(f'Could not delete slot {slot_id}')
+    if error:
+        return error
+    app.logger.info(f"Deleted slot {slot_id} ({len(targets)} slot(s) removed)")
+    return jsonify({'success': True, 'deleted': len(targets)})
 
 
 @app.route('/api/admin/set_timeslots', methods=['POST'])
 @admin_required
 def set_timeslots():
-    slots = request.get_json(silent=True)
-    if not isinstance(slots, list):
-        return jsonify({
-            "success": False,
-            "message": "Request body must be a JSON array of slots"
-        }), 400
-    app.logger.info(f"Received {len(slots)} slots to set")
-
-    try:
-        # Start a transaction
-        db.session.begin_nested()
-
-        # Get all existing slots
-        existing_slots = {str(slot.id): slot for slot in TimeSlot.query.all()}
-        app.logger.debug(f"Found {len(existing_slots)} existing slots")
-
-        # Keep track of processed slots
-        processed_slots = set()
-
-        # Update or create slots
-        for slot in slots:
-            if not isinstance(slot, dict):
-                raise ValueError("Each slot must be an object")
-
-            slot_id = slot.get('id')
-            slot_id_str = str(slot_id) if slot_id is not None else None
-            start_time = _parse_local_datetime(slot.get('start_time'), 'start_time')
-            end_time = _parse_local_datetime(slot.get('end_time'), 'end_time')
-            if end_time <= start_time:
-                raise ValueError("end_time must be after start_time")
-
-            location = _normalize_location({"location": slot.get('location')})
-            if location is None:
-                raise ValueError("Field 'location' is required")
-
-            name = _normalize_optional_slot_name(slot.get('name'))
-            is_available = slot.get('is_available', True)
-            if not isinstance(is_available, bool):
-                raise ValueError("Field 'is_available' must be a boolean")
-
-            # Check if it's a new slot (temporary ID from frontend)
-            if slot_id_str and slot_id_str.startswith('temp_'):
-                app.logger.debug(f"Creating new slot: {start_time} - {end_time}")
-                new_slot = TimeSlot(
-                    start_time=start_time,
-                    end_time=end_time,
-                    is_available=is_available,
-                    name=name,
-                    location=location
-                )
-                db.session.add(new_slot)
-                db.session.flush()  # This will assign an ID to the new slot
-                processed_slots.add(str(new_slot.id))
-                app.logger.info(f"Added new slot with ID {new_slot.id}")
-            elif slot_id_str in existing_slots and slot_id_str not in processed_slots:
-                app.logger.debug(f"Updating existing slot {slot_id_str}")
-                existing_slot = existing_slots[slot_id_str]
-                existing_slot.start_time = start_time
-                existing_slot.end_time = end_time
-                existing_slot.is_available = is_available
-                existing_slot.name = name
-                existing_slot.location = location
-                processed_slots.add(slot_id_str)
-                app.logger.info(f"Updated slot {slot_id_str}")
-
-        # Commit the transaction
-        db.session.commit()
-        app.logger.info(f"Successfully processed {len(processed_slots)} slots")
-        
-        return jsonify({
-            "success": True, 
-            "message": f"Successfully processed {len(processed_slots)} slots"
-        })
-    except ValueError as e:
-        db.session.rollback()
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 400
-    except SQLAlchemyError as e:
-        # Rollback the transaction
-        db.session.rollback()
-        app.logger.error(f"Error saving slots: {str(e)}")
-        return jsonify({
-            "success": False,
-            "message": f"Error saving slots: {str(e)}. Original data preserved."
-        }), 500
+    # Retired: saving the whole calendar from a browser snapshot could
+    # overwrite bookings made after the page was loaded.
+    return _error('This endpoint has been removed. Changes now save individually via /api/admin/slots.', 410)
 
 @app.route('/api/get_timeslots', methods=['GET'])
 def get_timeslots():
@@ -678,81 +772,43 @@ def admin_logout():
 @app.route('/api/admin/delete_timeslot/<int:id>', methods=['DELETE'])
 @admin_required
 def delete_timeslot(id):
-    app.logger.info(f"Attempting to delete timeslot {id}")
-    slot = TimeSlot.query.get(id)
-    if slot:
-        delete_subsequent = request.args.get('delete_subsequent', 'false').lower() == 'true'
-        
-        if delete_subsequent and slot.is_repeated:
-            app.logger.info(f"Deleting slot {id} and subsequent repeating slots")
-            subsequent_slots = TimeSlot.query.filter(
-                TimeSlot.start_time >= slot.start_time,
-                func.extract('dow', TimeSlot.start_time) == func.extract('dow', slot.start_time),
-                func.extract('hour', TimeSlot.start_time) == func.extract('hour', slot.start_time),
-                func.extract('minute', TimeSlot.start_time) == func.extract('minute', slot.start_time),
-                func.extract('hour', TimeSlot.end_time) == func.extract('hour', slot.end_time),
-                func.extract('minute', TimeSlot.end_time) == func.extract('minute', slot.end_time),
-                TimeSlot.is_repeated == True,
-                TimeSlot.name == slot.name
-            ).all()
-            
-            for subsequent_slot in subsequent_slots:
-                db.session.delete(subsequent_slot)
-                app.logger.debug(f"Deleted slot {subsequent_slot.id}")
-        else:
-            app.logger.info(f"Deleting single slot {id}")
-            db.session.delete(slot)
-        
-        db.session.commit()
-        app.logger.info(f"Successfully deleted timeslot(s)")
-        return jsonify({'success': True})
-    app.logger.warning(f"Failed to delete timeslot {id}: Slot not found")
-    return jsonify({'success': False, 'message': 'Time slot not found'})
+    """Legacy API (no version check); the admin page uses DELETE /api/admin/slots/<id>."""
+    slot = db.session.get(TimeSlot, id)
+    if not slot:
+        return _error('Time slot not found', 404)
+    delete_subsequent = request.args.get('delete_subsequent', 'false').lower() == 'true'
+    targets = _following_in_series(slot) if delete_subsequent else [slot]
+    for target in targets:
+        db.session.delete(target)
+    error = _commit_or_error(f'Could not delete slot {id}')
+    if error:
+        return error
+    app.logger.info(f"Deleted slot {id} ({len(targets)} slot(s) removed)")
+    return jsonify({'success': True, 'deleted': len(targets)})
 
 @app.route('/api/admin/change_location/<int:id>', methods=['POST'])
 @admin_required
 def change_location(id):
-    app.logger.info(f"Attempting to change location for timeslot {id}")
+    """Legacy API (no version check); the admin page uses PATCH /api/admin/slots/<id>."""
     slot = db.session.get(TimeSlot, id)
-    if slot:
-        data = request.get_json(silent=True) or {}
-        update_subsequent = bool(data.get('update_subsequent', False))
-        try:
-            new_location = _normalize_location({"location": data.get('location')})
-        except ValueError as e:
-            return jsonify({'success': False, 'message': str(e)}), 400
-
-        if new_location is None:
-            app.logger.warning(f"Failed to update location for slot {id}: New location not provided")
-            return jsonify({'success': False, 'message': 'New location not provided'}), 400
-
-        if update_subsequent and slot.is_repeated:
-            app.logger.info(f"Updating location for slot {id} and subsequent repeating slots")
-            # Update this slot and all subsequent repeating slots
-            subsequent_slots = TimeSlot.query.filter(
-                TimeSlot.start_time >= slot.start_time,
-                func.extract('dow', TimeSlot.start_time) == func.extract('dow', slot.start_time),  # Match weekday
-                func.extract('hour', TimeSlot.start_time) == func.extract('hour', slot.start_time),  # Match start hour
-                func.extract('minute', TimeSlot.start_time) == func.extract('minute', slot.start_time),  # Match start minute
-                func.extract('hour', TimeSlot.end_time) == func.extract('hour', slot.end_time),  # Match end hour
-                func.extract('minute', TimeSlot.end_time) == func.extract('minute', slot.end_time),  # Match end minute
-                TimeSlot.is_repeated == True,
-                TimeSlot.name == slot.name
-            ).all()
-
-            for subsequent_slot in subsequent_slots:
-                subsequent_slot.location = new_location
-                app.logger.debug(f"Updated location for slot {subsequent_slot.id}")
-        else:
-            app.logger.info(f"Updating location for slot {id}")
-            # Update only this slot
-            slot.location = new_location
-
-        db.session.commit()
-        app.logger.info(f"Successfully updated location for slot {id}")
-        return jsonify({'success': True})
-    app.logger.warning(f"Failed to update location for slot {id}: Slot not found")
-    return jsonify({'success': False, 'message': 'Time slot not found'})
+    if not slot:
+        return _error('Time slot not found', 404)
+    data = request.get_json(silent=True) or {}
+    try:
+        new_location = _normalize_location({"location": data.get('location')})
+    except ValueError as e:
+        return _error(str(e), 400)
+    if new_location is None:
+        return _error('New location not provided', 400)
+    update_subsequent = bool(data.get('update_subsequent', False))
+    targets = _following_in_series(slot) if update_subsequent else [slot]
+    for target in targets:
+        target.location = new_location
+    error = _commit_or_error(f'Could not update location for slot {id}')
+    if error:
+        return error
+    app.logger.info(f"Updated location for slot {id} ({len(targets)} slot(s) affected)")
+    return jsonify({'success': True, 'updated': len(targets)})
 
 @app.route('/api/admin/book_supervision', methods=['POST'])
 @admin_required
@@ -997,9 +1053,61 @@ def questions_set():
 def faq():
     return render_template('faq.html')
 
+def upgrade_schema():
+    """Add columns introduced after the database was first created.
+
+    Idempotent and safe on SQLite and PostgreSQL. Existing repeating bookings
+    are grouped into series by the rule the old code used to find them
+    (same student name, weekday, start and end time).
+    """
+    columns = {c['name'] for c in sa_inspect(db.engine).get_columns('time_slot')}
+    with db.engine.begin() as conn:
+        if 'series_id' not in columns:
+            conn.execute(text("ALTER TABLE time_slot ADD COLUMN series_id VARCHAR(36)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_time_slot_series_id ON time_slot (series_id)"))
+        if 'version' not in columns:
+            conn.execute(text("ALTER TABLE time_slot ADD COLUMN version INTEGER NOT NULL DEFAULT 1"))
+
+        if db.engine.dialect.name == 'sqlite':
+            # Rows written by raw SQL lack the microseconds SQLAlchemy writes,
+            # and SQLite compares datetimes as text, so normalise them once.
+            legacy = conn.execute(text(
+                "SELECT id, start_time, end_time FROM time_slot "
+                "WHERE length(start_time) != 26 OR length(end_time) != 26"
+            )).all()
+            for row in legacy:
+                conn.execute(
+                    text("UPDATE time_slot SET start_time = :s, end_time = :e WHERE id = :id"),
+                    {
+                        "s": isoparse(str(row.start_time)).strftime('%Y-%m-%d %H:%M:%S.%f'),
+                        "e": isoparse(str(row.end_time)).strftime('%Y-%m-%d %H:%M:%S.%f'),
+                        "id": row.id,
+                    },
+                )
+            if legacy:
+                app.logger.info(f"Normalised datetime format of {len(legacy)} slot(s)")
+
+        rows = conn.execute(text(
+            "SELECT id, start_time, end_time, name FROM time_slot "
+            "WHERE is_repeated = :repeated AND series_id IS NULL ORDER BY start_time"
+        ), {"repeated": True}).all()
+        series = {}
+        for row in rows:
+            start = row.start_time if isinstance(row.start_time, datetime) else isoparse(str(row.start_time))
+            end = row.end_time if isinstance(row.end_time, datetime) else isoparse(str(row.end_time))
+            key = (row.name, start.weekday(), start.time(), end.time())
+            series.setdefault(key, str(uuid.uuid4()))
+            conn.execute(
+                text("UPDATE time_slot SET series_id = :series_id WHERE id = :id"),
+                {"series_id": series[key], "id": row.id},
+            )
+        if rows:
+            app.logger.info(f"Grouped {len(rows)} repeating slots into {len(series)} series")
+
 def init_db():
     with app.app_context():
         db.create_all()
+        upgrade_schema()
         ensure_admin_account()
 
 # Configure logging

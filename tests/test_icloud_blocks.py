@@ -170,7 +170,8 @@ def test_icloud_events_include_all_day_and_free_events_but_not_cancellations(mon
     assert events[1]["allDay"] is True
     assert events[1]["end"] == "2099-06-03"
     assert events[2]["free"] is True
-    assert len(icloud_availability.busy_intervals(start, end)) == 2
+    # Only the timed, opaque event blocks: all-day, free and cancelled events don't.
+    assert len(icloud_availability.busy_intervals(start, end)) == 1
 
 
 def test_admin_display_cache_checks_tokens_before_refetching(monkeypatch):

@@ -52,10 +52,10 @@ body.page { max-width: none; min-height: 100vh; margin: 0; padding: 0; backgroun
 .page-admin .icloud-work-dot { background: #dce9f7; border-color: #a9c4df; }
 .page-admin .icloud-benji-dot { background: #e8e1f5; border-color: #c5b4e3; }
 .page-admin .icloud-leisure-dot { background: #f9eccf; border-color: #e2c989; }
-.page-admin #saveTimeSlots { border: 1px solid #235a49; background: #286a52; border-radius: 4px; color: #fff; padding: 8px 14px; cursor: pointer; }
-.page-admin #message + #calendar { margin-top: 16px; }
-.page-admin #message:not(:empty) { margin-top: 12px; }
 .page-admin #blockModal .help-text { margin: 12px 0; }
+.page-admin #message { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 1100; width: max-content; max-width: min(calc(100vw - 32px), 640px); margin: 0; padding: 10px 14px; border: 1px solid #cbded2; border-radius: 6px; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.14); color: var(--text); }
+.page-admin #message.success { border-color: #9cc9b2; background: #f2faf5; color: #1f5a44; }
+.page-admin #message.error { border-color: #e5c8cd; background: #fff7f8; color: #8f3343; }
 .page-admin .modal-actions .secondary-button { background: #fff; color: var(--text); border-color: #bfcac4; }
 .page-admin button:disabled { opacity: .55; cursor: wait; }
 /* Set work and FAQ */

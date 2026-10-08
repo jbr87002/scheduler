@@ -15,6 +15,11 @@ _event_cache_lock = Lock()
 _CACHE_MAX_AGE_SECONDS = 3600
 _CACHE_FALLBACK_SECONDS = 300
 _CACHE_MAX_RANGES = 12
+# Finding the calendars (principal + calendar list) takes ~13s on iCloud, so
+# remember their URLs; searching a known calendar URL takes well under a second.
+_calendar_urls = {}
+_calendar_urls_lock = Lock()
+_CALENDAR_URLS_MAX_AGE_SECONDS = 6 * 3600
 
 
 class ICloudUnavailable(Exception):
@@ -50,7 +55,46 @@ def _selected_calendars(client):
     missing = [name for name in CALENDAR_NAMES if name not in found]
     if missing:
         raise ICloudUnavailable("Missing iCloud calendar(s): " + ", ".join(missing))
+    urls = {name: getattr(calendar, "url", None) for name, calendar in found.items()}
+    with _calendar_urls_lock:
+        _calendar_urls.clear()
+        if all(urls.values()):
+            _calendar_urls.update(urls=urls, fetched_at=clock.monotonic())
     return found
+
+
+def forget_calendars():
+    with _calendar_urls_lock:
+        _calendar_urls.clear()
+
+
+def _known_calendars(client):
+    with _calendar_urls_lock:
+        entry = dict(_calendar_urls)
+    if not entry or clock.monotonic() - entry["fetched_at"] > _CALENDAR_URLS_MAX_AGE_SECONDS:
+        return None
+    return {name: client.calendar(url=url) for name, url in entry["urls"].items()}
+
+
+def _with_calendars(read):
+    """Run read(calendars), using remembered calendar URLs when possible.
+
+    If a remembered URL fails (calendar moved, renamed or deleted), forget the
+    URLs and retry once with a full discovery.
+    """
+    with _client() as client:
+        try:
+            known = _known_calendars(client)
+        except Exception:
+            known = None
+        if known is not None:
+            try:
+                return read(known)
+            except ICloudUnavailable:
+                raise
+            except Exception:
+                forget_calendars()
+        return read(_selected_calendars(client))
 
 
 def check_connection():
@@ -81,13 +125,19 @@ def _local(value):
     raise ValueError("Unsupported iCloud event date")
 
 
-def _event_interval(component, include_transparent=False):
+def _is_all_day(start_field):
+    return isinstance(start_field.dt, date) and not isinstance(start_field.dt, datetime)
+
+
+def _event_interval(component, include_transparent=False, include_all_day=True):
     if str(component.get("STATUS", "")).upper() == "CANCELLED":
         return None
     if not include_transparent and str(component.get("TRANSP", "")).upper() == "TRANSPARENT":
         return None
     start_field = component.get("DTSTART")
     if not start_field:
+        return None
+    if not include_all_day and _is_all_day(start_field):
         return None
     start = _local(start_field.dt)
     end_field = component.get("DTEND")
@@ -103,24 +153,31 @@ def _event_interval(component, include_transparent=False):
 
 
 def busy_intervals(start, end):
-    """Return private busy intervals only; event names never leave this module."""
+    """Return private busy intervals only; event names never leave this module.
+
+    All-day events (reminders, birthdays, deadlines) never count as busy; only
+    timed events that are not marked free do.
+    """
     window_start = start.replace(tzinfo=LONDON)
     window_end = end.replace(tzinfo=LONDON)
-    intervals = []
+
+    def read(calendars):
+        intervals = []
+        for calendar in calendars.values():
+            for event in calendar.search(
+                start=window_start, end=window_end, event=True, expand=True
+            ):
+                interval = _event_interval(event.get_icalendar_component(), include_all_day=False)
+                if interval and interval[0] < window_end and interval[1] > window_start:
+                    intervals.append(interval)
+        return intervals
+
     try:
-        with _client() as client:
-            for calendar in _selected_calendars(client).values():
-                for event in calendar.search(
-                    start=window_start, end=window_end, event=True, expand=True
-                ):
-                    interval = _event_interval(event.get_icalendar_component())
-                    if interval and interval[0] < window_end and interval[1] > window_start:
-                        intervals.append(interval)
+        return _with_calendars(read)
     except ICloudUnavailable:
         raise
     except Exception as exc:
         raise ICloudUnavailable("Could not read iCloud availability. No slots were created.") from exc
-    return intervals
 
 
 def _calendar_events_from(calendars, window_start, window_end):
@@ -154,8 +211,9 @@ def calendar_events(start, end):
     window_start = start.replace(tzinfo=LONDON)
     window_end = end.replace(tzinfo=LONDON)
     try:
-        with _client() as client:
-            return _calendar_events_from(_selected_calendars(client), window_start, window_end)
+        return _with_calendars(
+            lambda calendars: _calendar_events_from(calendars, window_start, window_end)
+        )
     except ICloudUnavailable:
         raise
     except Exception as exc:
@@ -187,29 +245,31 @@ def cached_calendar_events(start, end):
     window_start = start.replace(tzinfo=LONDON)
     window_end = end.replace(tzinfo=LONDON)
     key = (window_start.isoformat(), window_end.isoformat())
+
+    def read(calendars):
+        tokens = _calendar_sync_tokens(calendars)
+        entry = _event_cache.get(key)
+        age = clock.monotonic() - entry["fetched_at"] if entry else float("inf")
+        if entry and (
+            (tokens is not None and tokens == entry["tokens"] and age < _CACHE_MAX_AGE_SECONDS)
+            or (tokens is None and entry["tokens"] is None and age < _CACHE_FALLBACK_SECONDS)
+        ):
+            _event_cache.move_to_end(key)
+            return [dict(event) for event in entry["events"]]
+        events = _calendar_events_from(calendars, window_start, window_end)
+        _event_cache[key] = {
+            "tokens": tokens,
+            "fetched_at": clock.monotonic(),
+            "events": events,
+        }
+        _event_cache.move_to_end(key)
+        while len(_event_cache) > _CACHE_MAX_RANGES:
+            _event_cache.popitem(last=False)
+        return [dict(event) for event in events]
+
     with _event_cache_lock:
         try:
-            with _client() as client:
-                calendars = _selected_calendars(client)
-                tokens = _calendar_sync_tokens(calendars)
-                entry = _event_cache.get(key)
-                age = clock.monotonic() - entry["fetched_at"] if entry else float("inf")
-                if entry and (
-                    (tokens is not None and tokens == entry["tokens"] and age < _CACHE_MAX_AGE_SECONDS)
-                    or (tokens is None and entry["tokens"] is None and age < _CACHE_FALLBACK_SECONDS)
-                ):
-                    _event_cache.move_to_end(key)
-                    return [dict(event) for event in entry["events"]]
-                events = _calendar_events_from(calendars, window_start, window_end)
-                _event_cache[key] = {
-                    "tokens": tokens,
-                    "fetched_at": clock.monotonic(),
-                    "events": events,
-                }
-                _event_cache.move_to_end(key)
-                while len(_event_cache) > _CACHE_MAX_RANGES:
-                    _event_cache.popitem(last=False)
-                return [dict(event) for event in events]
+            return _with_calendars(read)
         except ICloudUnavailable:
             raise
         except Exception as exc:
