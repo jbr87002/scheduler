@@ -338,6 +338,15 @@ def signup():
     slot_location = timeslot.location
     slot_duration = slot_end - slot_start
 
+    if repeat and end_of_term.date() < slot_start.date():
+        # END_OF_TERM left over from a previous term: refuse rather than
+        # silently booking a single week.
+        app.logger.error(f"END_OF_TERM ({end_of_term.date()}) is before slot {slot_id} ({slot_start.date()})")
+        return jsonify({
+            'success': False,
+            'message': 'Repeat bookings are not set up for this term yet. Please book a one-off slot or email jbr46.',
+        }), 500
+
     repeat_occurrences = (
         list(_repeated_occurrences(slot_start, slot_duration, end_of_term))
         if repeat else []

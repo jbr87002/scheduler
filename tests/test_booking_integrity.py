@@ -76,3 +76,26 @@ def test_bulk_save_endpoint_is_retired():
         base_url="https://localhost",
     )
     assert response.status_code == 410
+
+
+def test_repeat_signup_refuses_when_end_of_term_is_stale(monkeypatch):
+    monkeypatch.setenv("END_OF_TERM", "2026-06-10")
+    with app.app_context():
+        db.session.add(TimeSlot(
+            start_time=datetime(2026, 10, 14, 14),
+            end_time=datetime(2026, 10, 14, 15),
+            is_available=True,
+            location="A",
+        ))
+        db.session.commit()
+
+    response = app.test_client().post(
+        "/api/signup",
+        json={"id": 1, "name": "new", "repeat": True},
+        base_url="https://localhost",
+    )
+
+    assert response.status_code == 500
+    with app.app_context():
+        slot = db.session.get(TimeSlot, 1)
+        assert (slot.is_available, slot.name) == (True, None)
