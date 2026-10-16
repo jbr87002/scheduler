@@ -19,6 +19,7 @@ import imaplib
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import time
@@ -47,6 +48,24 @@ def log(message):
 
 
 # ---- Config, secrets and state ----------------------------------------------
+
+_ssl_context = None
+
+
+def ssl_context():
+    """Verified TLS using macOS's trusted roots: python.org's Python ships
+    without CA certificates, so the default context can't verify anything."""
+    global _ssl_context
+    if _ssl_context is None:
+        pem = subprocess.run(
+            ["security", "find-certificate", "-a", "-p",
+             "/System/Library/Keychains/SystemRootCertificates.keychain"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        _ssl_context = ssl.create_default_context()
+        _ssl_context.load_verify_locations(cadata=pem)
+    return _ssl_context
+
 
 def keychain(service):
     result = subprocess.run(
@@ -77,7 +96,7 @@ def new_state():
 # ---- Bookings (public timetable) --------------------------------------------
 
 def booked_slots():
-    with urllib.request.urlopen(f"{SITE}/api/get_timeslots", timeout=60) as response:
+    with urllib.request.urlopen(f"{SITE}/api/get_timeslots", timeout=60, context=ssl_context()) as response:
         slots = json.load(response)
     booked = [s for s in slots if not s["is_available"]]
     for slot in booked:
@@ -119,7 +138,7 @@ def unique_path(path):
 
 
 def fetch_new_work(gmail_address, gmail_password, state, booked):
-    with imaplib.IMAP4_SSL("imap.gmail.com") as imap:
+    with imaplib.IMAP4_SSL("imap.gmail.com", ssl_context=ssl_context()) as imap:
         imap.login(gmail_address, gmail_password)
         imap.select('"[Gmail]/All Mail"', readonly=True)
         status, data = imap.search(None, "X-GM-RAW", f'"{GMAIL_QUERY}"')
@@ -205,7 +224,7 @@ def mark_on_website(token, slot_id, crsid):
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
     )
     try:
-        urllib.request.urlopen(request, timeout=60).close()
+        urllib.request.urlopen(request, timeout=60, context=ssl_context()).close()
     except Exception as exc:  # The email has gone; the tick is a convenience.
         log(f"Could not tick {crsid} as marked on the website: {exc}")
 

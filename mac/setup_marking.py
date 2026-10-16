@@ -43,7 +43,7 @@ def main():
         raise SystemExit("A Gmail address and app password are needed.")
     print("Checking Gmail…")
     try:
-        with imaplib.IMAP4_SSL("imap.gmail.com") as imap:
+        with imaplib.IMAP4_SSL("imap.gmail.com", ssl_context=sync.ssl_context()) as imap:
             imap.login(address, password)
     except imaplib.IMAP4.error as exc:
         raise SystemExit(f"Gmail rejected the sign-in ({exc}).") from None
