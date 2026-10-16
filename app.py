@@ -266,13 +266,24 @@ class WorkSubmission(db.Model):
     crsid = db.Column(db.String(20), nullable=False)
     format = db.Column(db.String(10), nullable=False)  # 'paper' or 'online'
     received_at = db.Column(db.DateTime, nullable=False)
+    marked = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    source = db.Column(db.String(10), nullable=False, default='manual', server_default='manual')  # or 'email'
 
     def to_json(self):
         return {
             'crsid': self.crsid,
             'format': self.format,
             'received_at': self.received_at.isoformat(),
+            'marked': self.marked,
+            'source': self.source,
         }
+
+class ProcessedEmail(db.Model):
+    """Emails already handled by sync_work_email.py, so each is counted once
+    (and a tick cleared by hand is not re-added on the next run)."""
+    message_id = db.Column(db.String(255), primary_key=True)
+    processed_at = db.Column(db.DateTime, nullable=False)
+    outcome = db.Column(db.String(200), nullable=False)
 
 class Admin(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -796,6 +807,10 @@ def admin():
 WORK_FORMATS = ('paper', 'online')
 
 
+def _not_received(crsid):
+    return {'crsid': crsid, 'format': None, 'received_at': None, 'marked': False, 'source': None}
+
+
 def _group_crsids(name):
     """CRSids in a booking name, which students type as e.g. 'abc12, def34' or 'abc12 def34'."""
     return [crsid for crsid in re.split(r'[\s,]+', name or '') if crsid]
@@ -836,7 +851,7 @@ def list_work():
             'slot': slot.to_json(),
             'students': [
                 received[(slot.id, crsid)].to_json() if (slot.id, crsid) in received
-                else {'crsid': crsid, 'format': None, 'received_at': None}
+                else _not_received(crsid)
                 for crsid in _group_crsids(slot.name)
             ],
         }
@@ -862,19 +877,35 @@ def set_work(slot_id, crsid):
         error = _commit_or_error(f'Could not clear work for {crsid} in slot {slot_id}')
         if error:
             return error
-        return jsonify({'success': True, 'student': {'crsid': crsid, 'format': None, 'received_at': None}})
+        return jsonify({'success': True, 'student': _not_received(crsid)})
 
+    # PUT: set how the work arrived and/or whether it has been marked.
     payload = request.get_json(silent=True) or {}
     work_format = payload.get('format')
-    if work_format not in WORK_FORMATS:
+    marked = payload.get('marked')
+    if work_format is not None and work_format not in WORK_FORMATS:
         return _error("Field 'format' must be 'paper' or 'online'.", 400)
+    if marked is not None and not isinstance(marked, bool):
+        return _error("Field 'marked' must be true or false.", 400)
+    if work_format is None and marked is None:
+        return _error("Send 'format' and/or 'marked'.", 400)
+    if not submission and work_format is None:
+        return _error('Record the work as received before marking it.', 400)
+
+    def apply(target):
+        if work_format is not None:
+            target.format = work_format
+        if marked is not None:
+            target.marked = marked
+
     if submission:
-        submission.format = work_format
+        apply(submission)
     else:
         submission = WorkSubmission(
-            slot_id=slot_id, crsid=crsid, format=work_format,
+            slot_id=slot_id, crsid=crsid, format=work_format, marked=False, source='manual',
             received_at=datetime.now(london_tz).replace(tzinfo=None, microsecond=0),
         )
+        apply(submission)
         db.session.add(submission)
     try:
         db.session.commit()
@@ -882,7 +913,7 @@ def set_work(slot_id, crsid):
         # Ticked twice at once; the other request already recorded it.
         db.session.rollback()
         submission = WorkSubmission.query.filter_by(slot_id=slot_id, crsid=crsid).first()
-        submission.format = work_format
+        apply(submission)
         error = _commit_or_error(f'Could not record work for {crsid} in slot {slot_id}')
         if error:
             return error
@@ -1197,6 +1228,16 @@ def upgrade_schema():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_time_slot_series_id ON time_slot (series_id)"))
         if 'version' not in columns:
             conn.execute(text("ALTER TABLE time_slot ADD COLUMN version INTEGER NOT NULL DEFAULT 1"))
+
+        inspector = sa_inspect(conn)
+        work_columns = (
+            {c['name'] for c in inspector.get_columns('work_submission')}
+            if inspector.has_table('work_submission') else {'marked', 'source'}
+        )
+        if 'marked' not in work_columns:
+            conn.execute(text("ALTER TABLE work_submission ADD COLUMN marked BOOLEAN NOT NULL DEFAULT FALSE"))
+        if 'source' not in work_columns:
+            conn.execute(text("ALTER TABLE work_submission ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'manual'"))
 
         if db.engine.dialect.name == 'sqlite':
             # Rows written by raw SQL lack the microseconds SQLAlchemy writes,

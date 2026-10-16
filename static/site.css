@@ -69,7 +69,10 @@ body.page { max-width: none; min-height: 100vh; margin: 0; padding: 0; backgroun
 .page-work .work-session h4 { margin: 0 0 8px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
 .page-work .work-count { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 10px; background: #fff3e0; color: #7a4b00; }
 .page-work .work-count.complete { background: #e3f4ea; color: #1f5a44; }
-.page-work .work-row { display: grid; grid-template-columns: 9em auto 1fr; align-items: center; gap: 12px; padding: 5px 0; border-top: 1px solid #eef2f0; }
+.page-work .work-row { display: grid; grid-template-columns: 9em auto auto 1fr; align-items: center; gap: 14px; padding: 5px 0; border-top: 1px solid #eef2f0; }
+.page-work .work-marked { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 400; font-size: 13px; cursor: pointer; }
+.page-work .work-marked input { accent-color: var(--link); width: 15px; height: 15px; }
+.page-work .work-marked.disabled { color: #a7b0ad; cursor: default; }
 .page-work .work-row:first-of-type { border-top: 0; }
 .page-work .work-crsid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
 .page-work .work-when { color: var(--muted); font-size: 13px; }

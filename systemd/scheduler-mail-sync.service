@@ -1,0 +1,7 @@
+[Unit]
+Description=Tick off supervision work emailed by students
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/scheduler
+ExecStart=%h/scheduler/.venv/bin/python %h/scheduler/sync_work_email.py

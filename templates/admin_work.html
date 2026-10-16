@@ -19,7 +19,7 @@
         </header>
         <main>
             <h1>Work received</h1>
-            <p class="intro">Tick off each student's work as it arrives. Changes save automatically.</p>
+            <p class="intro">Tick off each student's work as it arrives, and again once you've marked it. Work emailed to you is ticked automatically. Changes save automatically.</p>
             <div class="week-nav">
                 <button type="button" id="prevWeek" class="secondary-button" aria-label="Previous week">‹</button>
                 <h2 id="weekTitle"></h2>
@@ -132,8 +132,9 @@
                 const students = sessions.flatMap(session => session.students);
                 const paper = students.filter(s => s.format === 'paper').length;
                 const online = students.filter(s => s.format === 'online').length;
+                const marked = students.filter(s => s.format && s.marked).length;
                 summaryEl.textContent = students.length
-                    ? `${paper + online} of ${students.length} received this week (${paper} paper, ${online} online).`
+                    ? `${paper + online} of ${students.length} received this week (${paper} paper, ${online} online); ${marked} marked.`
                     : 'No supervisions booked this week.';
             }
 
@@ -184,10 +185,38 @@
                 when.className = 'work-when';
                 const groupName = `work-${sessionIndex}-${studentIndex}`;
 
+                const markedLabel = document.createElement('label');
+                markedLabel.className = 'work-marked';
+                const markedBox = document.createElement('input');
+                markedBox.type = 'checkbox';
+                markedLabel.append(markedBox, document.createTextNode('Marked'));
+
                 function showWhen(current) {
-                    when.textContent = current.received_at ? `Received ${shortDateTime(current.received_at)}` : '';
+                    when.textContent = current.received_at
+                        ? `Received${current.source === 'email' ? ' by email' : ''} ${shortDateTime(current.received_at)}`
+                        : '';
+                    markedBox.checked = !!(current.format && current.marked);
+                    markedBox.disabled = !current.format;
+                    markedLabel.classList.toggle('disabled', !current.format);
                 }
                 showWhen(student);
+
+                markedBox.addEventListener('change', async () => {
+                    const wanted = markedBox.checked;
+                    markedBox.disabled = true;
+                    try {
+                        const data = await api('PUT', `/api/admin/work/${session.slot.id}/${encodeURIComponent(student.crsid)}`, { marked: wanted });
+                        Object.assign(student, data.student);
+                        renderSummary();
+                    } catch (error) {
+                        setStatusMessage(error.message, 'error');
+                        if (error.status === 404) {
+                            load();
+                        }
+                    } finally {
+                        showWhen(student);
+                    }
+                });
 
                 FORMATS.forEach(option => {
                     const label = document.createElement('label');
@@ -224,7 +253,7 @@
                     control.appendChild(label);
                 });
 
-                row.append(name, control, when);
+                row.append(name, control, markedLabel, when);
                 return row;
             }
 

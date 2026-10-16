@@ -72,3 +72,22 @@ Notes:
 - Datetimes are stored as naive values interpreted as `Europe/London` local time.
 - If `location` is omitted, the server will try to infer it from overlapping available slots (otherwise it returns `400`).
 - If the requested time overlaps any booked slot, the server returns `409`.
+
+## Work received
+
+`/admin/work` lists each week's booked supervisions with a row per student:
+received (not yet / paper / online) and whether it has been marked.
+
+Emailed work is ticked automatically. Mail to jbr46@cam.ac.uk is forwarded to
+Gmail; `sync_work_email.py` (run every 10 minutes by the
+`scheduler-mail-sync` systemd timer, installed by `deploy.sh`) reads forwards
+with attachments from the last 14 days, takes the original sender's CRSid from
+the forwarded header, and ticks that student's next supervision as received
+online. Each email is handled once (`processed_email` table), so clearing a
+tick by hand sticks.
+
+To connect Gmail (needs a Gmail app password and IMAP enabled), on the server:
+
+```bash
+cd ~/scheduler && .venv/bin/python configure_gmail.py
+```

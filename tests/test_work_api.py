@@ -67,7 +67,9 @@ def test_tick_change_and_clear_work(client):
     received_at = first.json["student"]["received_at"]
 
     changed = client.put(url, json={"format": "online"}, headers=ADMIN, base_url=BASE)
-    assert changed.json["student"] == {"crsid": "ir387", "format": "online", "received_at": received_at}
+    assert changed.json["student"] == {
+        "crsid": "ir387", "format": "online", "received_at": received_at, "marked": False, "source": "manual",
+    }
 
     week = client.get("/api/admin/work?start=2026-10-12&end=2026-10-19", headers=ADMIN, base_url=BASE).json
     assert {s["crsid"]: s["format"] for s in week[0]["students"]} == {"sk2476": None, "ir387": "online"}
@@ -99,3 +101,14 @@ def test_work_page_requires_login(client):
     response = client.get("/admin/work", base_url=BASE)
     assert response.status_code == 302
     assert "/admin/login" in response.headers["Location"]
+
+
+def test_marking_requires_received_work_and_keeps_format(client):
+    slot_id = _booked("sk2476 ir387")
+    url = f"/api/admin/work/{slot_id}/sk2476"
+    assert client.put(url, json={"marked": True}, headers=ADMIN, base_url=BASE).status_code == 400
+    client.put(url, json={"format": "paper"}, headers=ADMIN, base_url=BASE)
+    response = client.put(url, json={"marked": True}, headers=ADMIN, base_url=BASE)
+    assert response.status_code == 200
+    assert (response.json["student"]["format"], response.json["student"]["marked"]) == ("paper", True)
+    assert client.put(url, json={"marked": "yes"}, headers=ADMIN, base_url=BASE).status_code == 400
