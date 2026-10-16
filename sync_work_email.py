@@ -11,71 +11,24 @@ it does nothing.
 """
 
 from datetime import datetime, timedelta
-from email import message_from_bytes, policy
-from email.utils import parsedate_to_datetime
-import html
 import imaplib
 import os
-import re
 import sys
 
-FORWARDER = "jbr46@cam.ac.uk"
-LOOKBACK_DAYS = 14
-# Ignore small images (email signatures, logos) when deciding if work is attached.
-MIN_IMAGE_BYTES = 30_000
-WORK_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".heic", ".doc", ".docx", ".note", ".goodnotes", ".zip")
+from work_email import GMAIL_QUERY, message_id_of, parse_forward as _parse
+
 # Latest a supervision can be after the email and still be the one the work is for.
 MATCH_WINDOW = timedelta(days=10)
-
-_FORWARDED_FROM = re.compile(r"From:\s*[^\n<]*<?\s*([a-z]+[0-9]+)@cam\.ac\.uk", re.IGNORECASE)
 
 
 def configured():
     return bool(os.getenv("GMAIL_ADDRESS") and os.getenv("GMAIL_APP_PASSWORD"))
 
 
-def _body_text(message):
-    part = message.get_body(preferencelist=("plain", "html"))
-    if part is None:
-        return ""
-    text = part.get_content()
-    if part.get_content_type() == "text/html":
-        text = html.unescape(re.sub(r"<[^>]+>", " ", text))
-    return text
-
-
-def _has_work_attachment(message):
-    for part in message.walk():
-        filename = (part.get_filename() or "").lower()
-        if not filename or part.is_multipart():
-            continue
-        payload = part.get_payload(decode=True) or b""
-        if part.get_content_maintype() == "image" and len(payload) < MIN_IMAGE_BYTES:
-            continue
-        if filename.endswith(WORK_EXTENSIONS) or part.get_content_type() == "application/pdf":
-            return True
-    return False
-
-
 def parse_forward(raw):
-    """Return (message_id, crsid, received_at) for a forwarded work email, or None.
-
-    received_at is naive Europe/London time, like the rest of the database.
-    """
-    from app import london_tz
-
-    message = message_from_bytes(raw, policy=policy.default)
-    message_id = (message.get("Message-ID") or "").strip()
-    if not message_id or not _has_work_attachment(message):
-        return None
-    match = _FORWARDED_FROM.search(_body_text(message))
-    if not match or match.group(1).lower() == FORWARDER.split("@")[0]:
-        return None
-    sent = parsedate_to_datetime(message["Date"])
-    if sent.tzinfo is None:
-        sent = sent.replace(tzinfo=london_tz)
-    received_at = sent.astimezone(london_tz).replace(tzinfo=None, microsecond=0)
-    return message_id, match.group(1).lower(), received_at
+    """Return (message_id, crsid, received_at) for a forwarded work email, or None."""
+    parsed = _parse(raw)
+    return parsed[:3] if parsed else None
 
 
 def _log_processed(message_id, outcome):
@@ -120,19 +73,13 @@ def record_work(message_id, crsid, received_at):
     return outcome
 
 
-def _message_id_of(header_bytes):
-    message = message_from_bytes(header_bytes, policy=policy.default)
-    return (message.get("Message-ID") or "").strip()
-
-
 def process_mailbox(imap):
     """Handle each recent forward once; already-processed emails are skipped
     after reading only their Message-ID header."""
     from app import db, ProcessedEmail
 
     imap.select('"[Gmail]/All Mail"', readonly=True)
-    query = f"from:{FORWARDER} has:attachment newer_than:{LOOKBACK_DAYS}d"
-    status, data = imap.search(None, "X-GM-RAW", f'"{query}"')
+    status, data = imap.search(None, "X-GM-RAW", f'"{GMAIL_QUERY}"')
     if status != "OK":
         raise RuntimeError(f"Gmail search failed: {status}")
     outcomes = []
@@ -140,7 +87,7 @@ def process_mailbox(imap):
         status, parts = imap.fetch(number, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
         if status != "OK" or not parts or not isinstance(parts[0], tuple):
             continue
-        message_id = _message_id_of(parts[0][1])
+        message_id = message_id_of(parts[0][1])
         if not message_id or db.session.get(ProcessedEmail, message_id):
             continue
         status, parts = imap.fetch(number, "(BODY.PEEK[])")

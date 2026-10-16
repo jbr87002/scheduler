@@ -91,3 +91,22 @@ To connect Gmail (needs a Gmail app password and IMAP enabled), on the server:
 ```bash
 cd ~/scheduler && .venv/bin/python configure_gmail.py
 ```
+
+## Marking on the iPad (Mac side)
+
+`mac/marking_sync.py` runs every 10 minutes on the Mac (launchd agent
+`com.benji.supervision-marking`). It saves emailed work into
+`iCloud Drive/Supervision marking/Week of …/<session>/<crsid> – <file>` for
+marking in Files/Markup on the iPad, and emails any file renamed to end in
+`_marked` back to the CRSid that starts its name (via Mail, from
+jbr46@cam.ac.uk), then ticks it as marked on the website. Each file is sent
+once; files whose name doesn't start with a booked student's CRSid are never
+sent. Set `MARKING_DRY_RUN=1` to log instead of sending.
+
+Set up (stores the Gmail app password and admin token in the Keychain):
+
+```bash
+.venv/bin/python mac/setup_marking.py
+```
+
+Log: `~/Library/Application Support/SupervisionMarking/marking.log`.
