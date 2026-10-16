@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Work received</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='erlenmeyer-flask.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='site.css') }}">
+</head>
+<body class="page page-admin page-work">
+    <div class="site-shell">
+        <header class="site-header">
+            <a class="site-name" href="{{ url_for('index') }}">Benji's supervisions</a>
+            <nav class="site-nav" aria-label="Main navigation">
+                <a href="{{ url_for('admin') }}">Manage slots</a>
+                <a href="{{ url_for('admin_work') }}" aria-current="page">Work received</a>
+                <a href="{{ url_for('admin_logout') }}">Log out</a>
+            </nav>
+        </header>
+        <main>
+            <h1>Work received</h1>
+            <p class="intro">Tick off each student's work as it arrives. Changes save automatically.</p>
+            <div class="week-nav">
+                <button type="button" id="prevWeek" class="secondary-button" aria-label="Previous week">‹</button>
+                <h2 id="weekTitle"></h2>
+                <button type="button" id="nextWeek" class="secondary-button" aria-label="Next week">›</button>
+                <button type="button" id="thisWeek" class="secondary-button">This week</button>
+            </div>
+            <p id="weekSummary" class="work-summary"></p>
+            <div id="sessions"></div>
+        </main>
+        <footer class="site-footer"><a href="https://www.srcf.net/">Hosted by SRCF</a></footer>
+    </div>
+    <div id="message" role="status" aria-live="polite"></div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const sessionsEl = document.getElementById('sessions');
+            const summaryEl = document.getElementById('weekSummary');
+            const statusMessage = document.getElementById('message');
+            const FORMATS = [
+                { value: '', label: 'Not received' },
+                { value: 'paper', label: 'Paper' },
+                { value: 'online', label: 'Online' }
+            ];
+            let weekStart = mondayOf(parseIsoDate(new URLSearchParams(window.location.search).get('week')) || new Date());
+            let messageTimer = null;
+            let sessions = [];
+
+            // ---- Dates (server times are naive Europe/London wall-clock) ----
+
+            function parseIsoDate(value) {
+                const match = value && value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : null;
+            }
+
+            function mondayOf(date) {
+                const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+                return monday;
+            }
+
+            function addDays(date, days) {
+                const result = new Date(date);
+                result.setDate(result.getDate() + days);
+                return result;
+            }
+
+            function isoDate(date) {
+                return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+            }
+
+            function longDate(date) {
+                return date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+            }
+
+            function shortDateTime(value) {
+                const date = parseIsoDate(value);
+                const time = value.slice(11, 16);
+                return `${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} ${time}`;
+            }
+
+            // ---- Server calls ----
+
+            class ApiError extends Error {
+                constructor(message, status) {
+                    super(message);
+                    this.status = status;
+                }
+            }
+
+            async function api(method, url, body) {
+                const options = { method, headers: {} };
+                if (body !== undefined) {
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(body);
+                }
+                let response;
+                try {
+                    response = await fetch(url, options);
+                } catch (error) {
+                    throw new ApiError('Could not reach the server. Check your connection and try again.', 0);
+                }
+                let data = {};
+                try {
+                    data = await response.json();
+                } catch (error) {
+                    // Non-JSON error page; fall through to the status check.
+                }
+                if (response.status === 401) {
+                    window.location.href = "{{ url_for('admin_login') }}";
+                    throw new ApiError('Your session has expired. Please log in again.', 401);
+                }
+                if (!response.ok || data.success === false) {
+                    throw new ApiError(data.message || `The server returned an error (${response.status}).`, response.status);
+                }
+                return data;
+            }
+
+            function setStatusMessage(text, type) {
+                clearTimeout(messageTimer);
+                statusMessage.textContent = text;
+                statusMessage.className = 'status-message' + (type ? ` ${type}` : '');
+                if (text) {
+                    messageTimer = setTimeout(() => setStatusMessage('', ''), type === 'error' ? 12000 : 4000);
+                }
+            }
+
+            // ---- Rendering ----
+
+            function renderSummary() {
+                const students = sessions.flatMap(session => session.students);
+                const paper = students.filter(s => s.format === 'paper').length;
+                const online = students.filter(s => s.format === 'online').length;
+                summaryEl.textContent = students.length
+                    ? `${paper + online} of ${students.length} received this week (${paper} paper, ${online} online).`
+                    : 'No supervisions booked this week.';
+            }
+
+            function sessionHeading(session) {
+                const received = session.students.filter(s => s.format).length;
+                const slot = session.slot;
+                return `${slot.start_time.slice(11, 16)}–${slot.end_time.slice(11, 16)} · ${slot.location}` +
+                    ` <span class="work-count${received === session.students.length ? ' complete' : ''}">${received}/${session.students.length}</span>`;
+            }
+
+            function render() {
+                document.getElementById('weekTitle').textContent = `Week of ${longDate(weekStart)}`;
+                renderSummary();
+                sessionsEl.replaceChildren();
+                let currentDay = null;
+                sessions.forEach((session, sessionIndex) => {
+                    const day = session.slot.start_time.slice(0, 10);
+                    if (day !== currentDay) {
+                        currentDay = day;
+                        const heading = document.createElement('h3');
+                        heading.className = 'work-day';
+                        heading.textContent = longDate(parseIsoDate(day));
+                        sessionsEl.appendChild(heading);
+                    }
+                    const card = document.createElement('section');
+                    card.className = 'work-session';
+                    const title = document.createElement('h4');
+                    title.innerHTML = sessionHeading(session);
+                    card.appendChild(title);
+                    session.students.forEach((student, studentIndex) => {
+                        card.appendChild(studentRow(session, sessionIndex, student, studentIndex, title));
+                    });
+                    sessionsEl.appendChild(card);
+                });
+            }
+
+            function studentRow(session, sessionIndex, student, studentIndex, title) {
+                const row = document.createElement('div');
+                row.className = 'work-row';
+                const name = document.createElement('span');
+                name.className = 'work-crsid';
+                name.textContent = student.crsid;
+                const control = document.createElement('div');
+                control.className = 'segmented';
+                control.setAttribute('role', 'radiogroup');
+                control.setAttribute('aria-label', `Work from ${student.crsid}`);
+                const when = document.createElement('span');
+                when.className = 'work-when';
+                const groupName = `work-${sessionIndex}-${studentIndex}`;
+
+                function showWhen(current) {
+                    when.textContent = current.received_at ? `Received ${shortDateTime(current.received_at)}` : '';
+                }
+                showWhen(student);
+
+                FORMATS.forEach(option => {
+                    const label = document.createElement('label');
+                    const input = document.createElement('input');
+                    input.type = 'radio';
+                    input.name = groupName;
+                    input.value = option.value;
+                    input.checked = (student.format || '') === option.value;
+                    input.addEventListener('change', async () => {
+                        const previous = { ...student };
+                        control.classList.add('saving');
+                        try {
+                            const url = `/api/admin/work/${session.slot.id}/${encodeURIComponent(student.crsid)}`;
+                            const data = option.value
+                                ? await api('PUT', url, { format: option.value })
+                                : await api('DELETE', url);
+                            Object.assign(student, data.student);
+                            showWhen(student);
+                            title.innerHTML = sessionHeading(session);
+                            renderSummary();
+                        } catch (error) {
+                            Object.assign(student, previous);
+                            control.querySelectorAll('input').forEach(i => { i.checked = (student.format || '') === i.value; });
+                            setStatusMessage(error.message, 'error');
+                            if (error.status === 404) {
+                                load();
+                            }
+                        } finally {
+                            control.classList.remove('saving');
+                        }
+                    });
+                    label.appendChild(input);
+                    label.appendChild(document.createTextNode(option.label));
+                    control.appendChild(label);
+                });
+
+                row.append(name, control, when);
+                return row;
+            }
+
+            async function load() {
+                const params = new URLSearchParams({ start: isoDate(weekStart), end: isoDate(addDays(weekStart, 7)) });
+                history.replaceState(null, '', `?week=${isoDate(weekStart)}`);
+                document.getElementById('weekTitle').textContent = `Week of ${longDate(weekStart)}`;
+                summaryEl.textContent = 'Loading…';
+                try {
+                    sessions = await api('GET', `/api/admin/work?${params}`);
+                    render();
+                } catch (error) {
+                    summaryEl.textContent = '';
+                    setStatusMessage('Could not load supervisions: ' + error.message, 'error');
+                }
+            }
+
+            document.getElementById('prevWeek').onclick = () => { weekStart = addDays(weekStart, -7); load(); };
+            document.getElementById('nextWeek').onclick = () => { weekStart = addDays(weekStart, 7); load(); };
+            document.getElementById('thisWeek').onclick = () => { weekStart = mondayOf(new Date()); load(); };
+            load();
+        });
+    </script>
+</body>
+</html>

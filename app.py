@@ -240,6 +240,9 @@ class TimeSlot(db.Model):
 
     __mapper_args__ = {"version_id_col": version}
 
+    # Deleting a slot deletes its work records (the FK also cascades in SQL).
+    submissions = db.relationship('WorkSubmission', cascade='all, delete-orphan')
+
     def to_json(self):
         return {
             'id': self.id,
@@ -251,6 +254,24 @@ class TimeSlot(db.Model):
             'is_repeated': self.is_repeated,
             'series_id': self.series_id,
             'version': self.version,
+        }
+
+class WorkSubmission(db.Model):
+    """One student's work for one booked supervision, ticked off on /admin/work."""
+    __table_args__ = (db.UniqueConstraint('slot_id', 'crsid'),)
+    id = db.Column(db.Integer, primary_key=True)
+    slot_id = db.Column(
+        db.Integer, db.ForeignKey('time_slot.id', ondelete='CASCADE'), nullable=False, index=True,
+    )
+    crsid = db.Column(db.String(20), nullable=False)
+    format = db.Column(db.String(10), nullable=False)  # 'paper' or 'online'
+    received_at = db.Column(db.DateTime, nullable=False)
+
+    def to_json(self):
+        return {
+            'crsid': self.crsid,
+            'format': self.format,
+            'received_at': self.received_at.isoformat(),
         }
 
 class Admin(db.Model):
@@ -771,6 +792,106 @@ def admin():
     calendar_url = url_for('export_calendar', calendar_id=admin.calendar_id, _external=True)
     webcal_url = calendar_url.replace('http://', 'webcal://').replace('https://', 'webcal://')
     return render_template('admin.html', supervision_start_date=supervision_start_date, calendar_url=webcal_url)
+
+WORK_FORMATS = ('paper', 'online')
+
+
+def _group_crsids(name):
+    """CRSids in a booking name, which students type as e.g. 'abc12, def34' or 'abc12 def34'."""
+    return [crsid for crsid in re.split(r'[\s,]+', name or '') if crsid]
+
+
+@app.route('/admin/work')
+def admin_work():
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_login'))
+    return render_template('admin_work.html')
+
+
+@app.route('/api/admin/work', methods=['GET'])
+@admin_required
+def list_work():
+    try:
+        start = _parse_range_param(request.args.get('start'), 'start')
+        end = _parse_range_param(request.args.get('end'), 'end')
+        if end <= start or end - start > timedelta(days=62):
+            raise ValueError('Select a date range of up to 62 days.')
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    slots = (
+        TimeSlot.query.filter(
+            TimeSlot.is_available == False,  # noqa: E712
+            TimeSlot.start_time >= start,
+            TimeSlot.start_time < end,
+        )
+        .order_by(TimeSlot.start_time)
+        .all()
+    )
+    received = {
+        (sub.slot_id, sub.crsid): sub
+        for sub in WorkSubmission.query.filter(WorkSubmission.slot_id.in_([s.id for s in slots])).all()
+    } if slots else {}
+    response = jsonify([
+        {
+            'slot': slot.to_json(),
+            'students': [
+                received[(slot.id, crsid)].to_json() if (slot.id, crsid) in received
+                else {'crsid': crsid, 'format': None, 'received_at': None}
+                for crsid in _group_crsids(slot.name)
+            ],
+        }
+        for slot in slots
+    ])
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+
+@app.route('/api/admin/work/<int:slot_id>/<crsid>', methods=['PUT', 'DELETE'])
+@admin_required
+def set_work(slot_id, crsid):
+    slot = db.session.get(TimeSlot, slot_id)
+    if not slot or slot.is_available:
+        return _error('This supervision no longer exists. The page has been refreshed.', 404)
+    if crsid not in _group_crsids(slot.name):
+        return _error(f'{crsid} is no longer in this group. The page has been refreshed.', 404)
+    submission = WorkSubmission.query.filter_by(slot_id=slot_id, crsid=crsid).first()
+
+    if request.method == 'DELETE':
+        if submission:
+            db.session.delete(submission)
+        error = _commit_or_error(f'Could not clear work for {crsid} in slot {slot_id}')
+        if error:
+            return error
+        return jsonify({'success': True, 'student': {'crsid': crsid, 'format': None, 'received_at': None}})
+
+    payload = request.get_json(silent=True) or {}
+    work_format = payload.get('format')
+    if work_format not in WORK_FORMATS:
+        return _error("Field 'format' must be 'paper' or 'online'.", 400)
+    if submission:
+        submission.format = work_format
+    else:
+        submission = WorkSubmission(
+            slot_id=slot_id, crsid=crsid, format=work_format,
+            received_at=datetime.now(london_tz).replace(tzinfo=None, microsecond=0),
+        )
+        db.session.add(submission)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # Ticked twice at once; the other request already recorded it.
+        db.session.rollback()
+        submission = WorkSubmission.query.filter_by(slot_id=slot_id, crsid=crsid).first()
+        submission.format = work_format
+        error = _commit_or_error(f'Could not record work for {crsid} in slot {slot_id}')
+        if error:
+            return error
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception(f'Could not record work for {crsid} in slot {slot_id}')
+        return _error('Could not save the change. Nothing was modified.', 500)
+    return jsonify({'success': True, 'student': submission.to_json()})
+
 
 @app.route('/admin/logout')
 def admin_logout():
