@@ -217,6 +217,29 @@ def send_email(to_address, subject, body, path):
                    input=SEND_SCRIPT, text=True, check=True, capture_output=True)
 
 
+FILE_SENT_SCRIPT = '''
+tell application "Mail"
+    set target to mailbox "Sent Items" of account "Cambridge"
+    set ms to (messages of mailbox "Sent Messages (Cambridge)" whose subject begins with "Marked supervision work")
+    repeat with i from (count of ms) to 1 by -1
+        move (item i of ms) to target
+    end repeat
+    return count of ms
+end tell
+'''
+
+
+def file_sent_copies():
+    """Mail keeps copies of these sends in a Mac-only "Sent Messages" folder;
+    move them to the Exchange Sent Items so they show up in Outlook. Runs
+    each time, so copies Mail files after a run are moved on the next one."""
+    result = subprocess.run(["osascript", "-"], input=FILE_SENT_SCRIPT, text=True, capture_output=True)
+    if result.returncode != 0:
+        log(f"Could not move sent copies to Sent Items: {result.stderr.strip()}")
+    elif result.stdout.strip() not in ("", "0"):
+        log(f"Moved {result.stdout.strip()} sent copies to Sent Items")
+
+
 def mark_on_website(token, slot_id, crsid):
     request = urllib.request.Request(
         f"{SITE}/api/admin/work/{slot_id}/{crsid}", method="PUT",
@@ -273,6 +296,8 @@ def main():
     for key, value in new_state().items():
         state.setdefault(key, value)
     MARKING_ROOT.mkdir(parents=True, exist_ok=True)
+    if state["sent"]:
+        file_sent_copies()
     booked = booked_slots()
     fetch_new_work(gmail_address, gmail_password, state, booked)
     send_marked(state, booked, keychain(KEYCHAIN_TOKEN))
