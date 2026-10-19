@@ -297,7 +297,14 @@ def main():
     state = load_json(STATE_PATH, new_state())
     for key, value in new_state().items():
         state.setdefault(key, value)
-    MARKING_ROOT.mkdir(parents=True, exist_ok=True)
+    try:
+        MARKING_ROOT.mkdir(parents=True, exist_ok=True)
+        os.listdir(MARKING_ROOT)
+    except PermissionError:
+        # Without this check rglob() silently finds nothing.
+        log(f"macOS is blocking access to {MARKING_ROOT}. Give 'Supervision Marking' Full Disk "
+            "Access in System Settings › Privacy & Security; it will retry automatically.")
+        return 1
     if state["sent"]:
         file_sent_copies()
     try:

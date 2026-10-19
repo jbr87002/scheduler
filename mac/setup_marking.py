@@ -15,6 +15,7 @@ import imaplib
 import json
 import os
 import plistlib
+import shlex
 import subprocess
 import sys
 
@@ -24,6 +25,7 @@ import marking_sync as sync  # noqa: E402
 
 LABEL = "com.benji.supervision-marking"
 PLIST = Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
+APP = Path.home() / "Applications/Supervision Marking.app"
 # The project's venv on the laptop; the Python running this script elsewhere
 # (e.g. /usr/bin/python3 on the Mac Studio). marking_sync.py needs only the stdlib.
 PYTHON = HERE.parent / ".venv/bin/python"
@@ -78,12 +80,36 @@ def main():
     else:
         print("  Couldn't fetch it; marked work will still be emailed, but not ticked on the website.")
 
-    PLIST.parent.mkdir(parents=True, exist_ok=True)
+    install_agent()
+    print(f"\nDone. Work will appear in iCloud Drive › {sync.MARKING_ROOT.name}.")
+
+
+def build_app(log_path):
+    """A tiny background app that runs marking_sync.py. It gives the job its own
+    identity for macOS privacy permissions (Full Disk Access for iCloud Drive,
+    controlling Mail), rather than granting them to every Python script."""
+    command = (f"{shlex.quote(str(PYTHON))} {shlex.quote(str(HERE / 'marking_sync.py'))}"
+               f" >> {shlex.quote(str(log_path))} 2>&1")
+    APP.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["rm", "-rf", str(APP)], check=True)
+    subprocess.run(["osacompile", "-o", str(APP),
+                    "-e", "try", "-e", f"do shell script {json.dumps(command)}", "-e", "end try"], check=True)
+    info_path = APP / "Contents/Info.plist"
+    info = plistlib.loads(info_path.read_bytes())
+    info.update(LSUIElement=True, CFBundleIdentifier=LABEL, CFBundleName="Supervision Marking")
+    info_path.write_bytes(plistlib.dumps(info))
+    subprocess.run(["codesign", "--force", "--sign", "-", str(APP)], check=True, capture_output=True)
+
+
+def install_agent():
+    sync.SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
     log_path = sync.SUPPORT_DIR / "marking.log"
+    build_app(log_path)
+    PLIST.parent.mkdir(parents=True, exist_ok=True)
     with PLIST.open("wb") as handle:
         plistlib.dump({
             "Label": LABEL,
-            "ProgramArguments": [str(PYTHON), str(HERE / "marking_sync.py")],
+            "ProgramArguments": [str(APP / "Contents/MacOS/applet")],
             "StartInterval": 600,
             "RunAtLoad": True,
             "StandardOutPath": str(log_path),
@@ -92,12 +118,16 @@ def main():
     domain = f"gui/{os.getuid()}"
     subprocess.run(["launchctl", "bootout", f"{domain}/{LABEL}"], capture_output=True)
     subprocess.run(["launchctl", "bootstrap", domain, str(PLIST)], check=True)
-
-    print("First run (macOS may ask to allow access to iCloud Drive and Mail; please allow)…")
-    subprocess.run([str(PYTHON), str(HERE / "marking_sync.py")], check=False)
-    print(f"\nDone. Work will appear in iCloud Drive › {sync.MARKING_ROOT.name}.")
-    print(f"Log: {log_path}")
+    print(f"""
+Installed {APP.name}, which runs every 10 minutes. Two macOS permissions it needs:
+  1. System Settings › Privacy & Security › Full Disk Access: click +, press ⌘⇧G,
+     go to {APP.parent} and add "{APP.name}" (switched on).
+  2. When it first sends marked work, allow "Supervision Marking" to control Mail.
+Log: {log_path}""")
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--reinstall-agent"]:
+        install_agent()  # Rebuild the app and launch agent without re-entering secrets.
+    else:
+        main()
