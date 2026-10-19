@@ -298,11 +298,26 @@ def main():
     MARKING_ROOT.mkdir(parents=True, exist_ok=True)
     if state["sent"]:
         file_sent_copies()
-    booked = booked_slots()
-    fetch_new_work(gmail_address, gmail_password, state, booked)
-    send_marked(state, booked, keychain(KEYCHAIN_TOKEN))
-    save_state(state)
-    return 0
+    try:
+        booked = booked_slots()
+    except OSError as exc:  # Offline (e.g. just woken from sleep): try again next run.
+        log(f"Could not load bookings from {SITE}: {exc}")
+        return 1
+    # Run both steps even if one fails, so a dropped Gmail connection doesn't
+    # hold up sending marked work (or vice versa).
+    failed = False
+    for step, run in (
+        ("Fetching work from Gmail", lambda: fetch_new_work(gmail_address, gmail_password, state, booked)),
+        ("Sending marked work", lambda: send_marked(state, booked, keychain(KEYCHAIN_TOKEN))),
+    ):
+        try:
+            run()
+        except (OSError, imaplib.IMAP4.error, subprocess.CalledProcessError) as exc:
+            failed = True
+            log(f"{step} failed, will retry next run: {type(exc).__name__}: {exc}")
+        finally:
+            save_state(state)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
