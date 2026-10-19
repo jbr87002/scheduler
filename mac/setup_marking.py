@@ -28,7 +28,8 @@ PLIST = Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
 # (e.g. /usr/bin/python3 on the Mac Studio). marking_sync.py needs only the stdlib.
 PYTHON = HERE.parent / ".venv/bin/python"
 if not PYTHON.exists():
-    PYTHON = Path(sys.executable)
+    # /usr/bin/python3 is a stable shim; sys.executable may be inside Xcode.
+    PYTHON = Path("/usr/bin/python3") if Path("/usr/bin/python3").exists() else Path(sys.executable)
 
 
 def store_secret(service, secret):
