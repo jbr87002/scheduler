@@ -33,10 +33,21 @@ if not PYTHON.exists():
 
 
 def store_secret(service, secret):
-    subprocess.run(
-        ["security", "add-generic-password", "-U", "-a", os.environ["USER"], "-s", service, "-w", secret],
-        check=True, capture_output=True,
-    )
+    """Save a secret in the login keychain without it ever appearing in a
+    command line, process list or error message: `security -i` reads the
+    command from stdin."""
+    if any(c in secret for c in '"\\\n'):
+        raise SystemExit("That secret contains characters this script can't store safely.")
+    command = f'add-generic-password -U -a "{os.environ["USER"]}" -s "{service}" -w "{secret}"\n'
+    result = subprocess.run(["security", "-i"], input=command, text=True, capture_output=True)
+    stored = subprocess.run(["security", "find-generic-password", "-s", service, "-w"],
+                            capture_output=True, text=True)
+    if result.returncode != 0 or stored.stdout.strip() != secret:
+        raise SystemExit(
+            "Couldn't save to the keychain. If you're connected over SSH, the login keychain is "
+            "locked: run `security unlock-keychain ~/Library/Keychains/login.keychain-db` first, "
+            "or run this in Terminal on the Mac itself."
+        )
 
 
 def main():
