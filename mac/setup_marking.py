@@ -24,7 +24,11 @@ import marking_sync as sync  # noqa: E402
 
 LABEL = "com.benji.supervision-marking"
 PLIST = Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
+# The project's venv on the laptop; the Python running this script elsewhere
+# (e.g. /usr/bin/python3 on the Mac Studio). marking_sync.py needs only the stdlib.
 PYTHON = HERE.parent / ".venv/bin/python"
+if not PYTHON.exists():
+    PYTHON = Path(sys.executable)
 
 
 def store_secret(service, secret):
