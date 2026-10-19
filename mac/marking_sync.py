@@ -220,6 +220,8 @@ def send_email(to_address, subject, body, path):
 FILE_SENT_SCRIPT = '''
 tell application "Mail"
     set target to mailbox "Sent Items" of account "Cambridge"
+    -- Mail only creates this Mac-only folder on the first send.
+    if not (exists mailbox "Sent Messages (Cambridge)") then return 0
     set ms to (messages of mailbox "Sent Messages (Cambridge)" whose subject begins with "Marked supervision work")
     repeat with i from (count of ms) to 1 by -1
         move (item i of ms) to target
