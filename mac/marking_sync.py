@@ -40,6 +40,7 @@ MATCH_WINDOW = timedelta(days=10)
 # syncing the annotations from the iPad.
 SETTLE_SECONDS = 120
 MARKED_SUFFIX = "_marked"
+MARKED_SUBJECT = "marked work"
 DRY_RUN = os.getenv("MARKING_DRY_RUN") == "1"
 
 
@@ -224,8 +225,8 @@ tell application "Mail"
     set target to mailbox "Sent Items" of account "Cambridge"
     -- Mail only creates this Mac-only folder on the first send.
     if not (exists mailbox "Sent Messages (Cambridge)") then return 0
-    -- Marked work goes out with no subject (older sends had a subject line).
-    set ms to (messages of mailbox "Sent Messages (Cambridge)" whose subject is "" or subject begins with "Marked supervision work")
+    -- Marked work goes out as "marked work" (older sends: "Marked supervision work …").
+    set ms to (messages of mailbox "Sent Messages (Cambridge)" whose subject is "marked work" or subject is "" or subject begins with "Marked supervision work")
     set moved to 0
     repeat with i from (count of ms) to 1 by -1
         set m to item i of ms
@@ -285,9 +286,10 @@ def send_marked(state, booked, token):
                 log(f"Not sending {rel}: name must start with a booked student's CRSid")
             continue
         folder_info = state["folders"].get(str(Path(rel).parent), {})
-        # Just the marked file: no subject or body text.
+        # Just the marked file, with a short subject (Mail asks for confirmation
+        # before sending with no subject, which would stall unattended sends).
         try:
-            send_email(f"{crsid}@cam.ac.uk", "", "", path)
+            send_email(f"{crsid}@cam.ac.uk", MARKED_SUBJECT, "", path)
         except subprocess.TimeoutExpired:
             # Mail may still send it once dealt with, so never retry (no duplicates).
             state["sent"][rel] = {"to": crsid, "at": datetime.now().isoformat(timespec="seconds"),
