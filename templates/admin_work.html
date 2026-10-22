@@ -174,13 +174,11 @@
             function studentRow(session, sessionIndex, student, studentIndex, title) {
                 const row = document.createElement('div');
                 row.className = 'work-row';
-                const name = document.createElement('span');
-                name.className = 'work-crsid';
-                name.textContent = student.crsid;
+                const who = studentLabel(student);
                 const control = document.createElement('div');
                 control.className = 'segmented';
                 control.setAttribute('role', 'radiogroup');
-                control.setAttribute('aria-label', `Work from ${student.crsid}`);
+                control.setAttribute('aria-label', `Work from ${student.name || student.crsid}`);
                 const when = document.createElement('span');
                 when.className = 'work-when';
                 const groupName = `work-${sessionIndex}-${studentIndex}`;
@@ -253,8 +251,110 @@
                     control.appendChild(label);
                 });
 
-                row.append(name, control, markedLabel, when);
+                row.append(who, control, markedLabel, when, noteBox(session, student));
                 return row;
+            }
+
+            // ---- Names (click to edit; shared by every row for that CRSid) ----
+
+            function studentLabel(student) {
+                const who = document.createElement('div');
+                who.className = 'work-who';
+                const name = document.createElement('button');
+                name.type = 'button';
+                name.className = 'work-name' + (student.name ? '' : ' missing');
+                name.textContent = student.name || 'Add name';
+                name.title = 'Click to edit name';
+                const crsid = document.createElement('span');
+                crsid.className = 'work-crsid';
+                crsid.textContent = student.crsid;
+                name.addEventListener('click', () => editName(who, name, student));
+                who.append(name, crsid);
+                return who;
+            }
+
+            function editName(who, nameButton, student) {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'work-name-input';
+                input.value = student.name || '';
+                input.maxLength = 100;
+                input.placeholder = 'Full name';
+                nameButton.replaceWith(input);
+                input.focus();
+                let done = false;
+                async function finish(save) {
+                    if (done) return;
+                    done = true;
+                    const wanted = input.value.trim();
+                    if (!save || wanted === (student.name || '')) {
+                        input.replaceWith(nameButton);
+                        return;
+                    }
+                    try {
+                        const data = await api('PUT', `/api/admin/students/${encodeURIComponent(student.crsid)}`, { name: wanted });
+                        sessions.forEach(session => session.students.forEach(s => {
+                            if (s.crsid === student.crsid) s.name = data.name;
+                        }));
+                        render();
+                    } catch (error) {
+                        setStatusMessage(error.message, 'error');
+                        input.replaceWith(nameButton);
+                    }
+                }
+                input.addEventListener('keydown', event => {
+                    if (event.key === 'Enter') finish(true);
+                    if (event.key === 'Escape') finish(false);
+                });
+                input.addEventListener('blur', () => finish(true));
+            }
+
+            // ---- Notes (saved as you type) ----
+
+            function noteBox(session, student) {
+                const wrap = document.createElement('div');
+                wrap.className = 'work-note';
+                const box = document.createElement('textarea');
+                box.rows = 1;
+                box.maxLength = 5000;
+                box.placeholder = 'Add a note…';
+                box.value = student.note || '';
+                box.setAttribute('aria-label', `Note about ${student.name || student.crsid}'s work`);
+                const status = document.createElement('span');
+                status.className = 'work-note-status';
+                wrap.append(box, status);
+
+                function fit() {
+                    box.style.height = 'auto';
+                    box.style.height = box.scrollHeight + 'px';
+                }
+                requestAnimationFrame(fit);
+
+                let timer = null;
+                let saved = student.note || '';
+                async function save() {
+                    clearTimeout(timer);
+                    const text = box.value;
+                    if (text === saved) return;
+                    status.textContent = 'Saving…';
+                    try {
+                        await api('PUT', `/api/admin/work/${session.slot.id}/${encodeURIComponent(student.crsid)}/note`, { text });
+                        saved = text;
+                        student.note = text;
+                        status.textContent = 'Saved';
+                        setTimeout(() => { if (status.textContent === 'Saved') status.textContent = ''; }, 2000);
+                    } catch (error) {
+                        status.textContent = '';
+                        setStatusMessage('Note not saved: ' + error.message, 'error');
+                    }
+                }
+                box.addEventListener('input', () => {
+                    fit();
+                    clearTimeout(timer);
+                    timer = setTimeout(save, 800);
+                });
+                box.addEventListener('blur', save);
+                return wrap;
             }
 
             async function load() {

@@ -49,6 +49,16 @@ def work_attachments(message):
     return found
 
 
+_FORWARDED_NAME = re.compile(r"From:\s*\"?([^\n<\"]+?)\"?\s*<\s*[a-z]+[0-9]+@cam\.ac\.uk", re.IGNORECASE)
+
+
+def forwarded_sender_name(raw):
+    """The display name in the forwarded "From:" line, e.g. 'Fedor Kuznetsov', or None."""
+    match = _FORWARDED_NAME.search(_body_text(message_from_bytes(raw, policy=policy.default)))
+    name = match.group(1).strip() if match else ""
+    return name if name and "@" not in name and len(name) <= 100 else None
+
+
 def message_id_of(header_bytes):
     message = message_from_bytes(header_bytes, policy=policy.default)
     return (message.get("Message-ID") or "").strip()

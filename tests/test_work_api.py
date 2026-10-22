@@ -112,3 +112,34 @@ def test_marking_requires_received_work_and_keeps_format(client):
     assert response.status_code == 200
     assert (response.json["student"]["format"], response.json["student"]["marked"]) == ("paper", True)
     assert client.put(url, json={"marked": "yes"}, headers=ADMIN, base_url=BASE).status_code == 400
+
+
+def test_names_and_notes_appear_in_week_and_can_be_cleared(client):
+    slot_id = _booked("sk2476 ir387")
+    assert client.put("/api/admin/students/sk2476", json={"name": " Sofia Koval "},
+                      headers=ADMIN, base_url=BASE).json["name"] == "Sofia Koval"
+    note_url = f"/api/admin/work/{slot_id}/ir387/note"
+    assert client.put(note_url, json={"text": "Handing in late (ill)"}, headers=ADMIN, base_url=BASE).status_code == 200
+
+    week = client.get("/api/admin/work?start=2026-10-12&end=2026-10-19", headers=ADMIN, base_url=BASE).json
+    students = {s["crsid"]: s for s in week[0]["students"]}
+    assert (students["sk2476"]["name"], students["sk2476"]["note"]) == ("Sofia Koval", "")
+    assert (students["ir387"]["name"], students["ir387"]["note"]) == (None, "Handing in late (ill)")
+
+    client.put(note_url, json={"text": "  "}, headers=ADMIN, base_url=BASE)
+    client.put("/api/admin/students/sk2476", json={"name": ""}, headers=ADMIN, base_url=BASE)
+    week = client.get("/api/admin/work?start=2026-10-12&end=2026-10-19", headers=ADMIN, base_url=BASE).json
+    assert [(s["name"], s["note"]) for s in week[0]["students"]] == [(None, ""), (None, "")]
+
+
+def test_notes_and_names_are_validated(client):
+    slot_id = _booked("sk2476 ir387")
+    assert client.put(f"/api/admin/work/{slot_id}/zz999/note", json={"text": "x"},
+                      headers=ADMIN, base_url=BASE).status_code == 404
+    assert client.put(f"/api/admin/work/{slot_id}/ir387/note", json={"text": 5},
+                      headers=ADMIN, base_url=BASE).status_code == 400
+    assert client.put("/api/admin/students/Not-A-CRSid", json={"name": "x"},
+                      headers=ADMIN, base_url=BASE).status_code == 400
+    assert client.put("/api/admin/students/ir387", json={"name": "<b>"},
+                      headers=ADMIN, base_url=BASE).status_code == 400
+    assert client.put("/api/admin/students/ir387", json={"name": "x"}, base_url=BASE).status_code == 401

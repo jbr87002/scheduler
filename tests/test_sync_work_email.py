@@ -138,3 +138,15 @@ def test_process_mailbox_downloads_each_email_only_once():
 
     assert sync.process_mailbox(imap) == []
     assert imap.full_fetches == 2
+
+
+def test_sender_name_is_saved_once_from_forwarded_header():
+    from app import Student
+    booked("fk420", day=17)
+    raw = forward("Fedor Kuznetsov <fk420@cam.ac.uk>", message_id="<n1@cam.ac.uk>")
+    assert sync.forwarded_sender_name(raw) == "Fedor Kuznetsov"
+    sync.record_work("<n1@cam.ac.uk>", "fk420", datetime(2026, 10, 16, 12), name="Fedor Kuznetsov")
+    db.session.get(Student, "fk420").name = "Fedor K."
+    db.session.commit()
+    sync.record_work("<n2@cam.ac.uk>", "fk420", datetime(2026, 10, 16, 12), name="Fedor Kuznetsov")
+    assert db.session.get(Student, "fk420").name == "Fedor K."  # an edited name is kept

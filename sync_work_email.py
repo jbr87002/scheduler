@@ -15,7 +15,7 @@ import imaplib
 import os
 import sys
 
-from work_email import GMAIL_QUERY, message_id_of, parse_forward as _parse
+from work_email import GMAIL_QUERY, forwarded_sender_name, message_id_of, parse_forward as _parse
 
 # Latest a supervision can be after the email and still be the one the work is for.
 MATCH_WINDOW = timedelta(days=10)
@@ -42,12 +42,17 @@ def _log_processed(message_id, outcome):
     db.session.commit()
 
 
-def record_work(message_id, crsid, received_at):
-    """Tick the student's next supervision as received online. Returns a short outcome."""
-    from app import db, TimeSlot, WorkSubmission, ProcessedEmail, _group_crsids
+def record_work(message_id, crsid, received_at, name=None):
+    """Tick the student's next supervision as received online. Returns a short outcome.
+
+    name (from the email's From line) is saved for the CRSid if none is known yet.
+    """
+    from app import db, TimeSlot, WorkSubmission, ProcessedEmail, Student, _group_crsids
 
     if db.session.get(ProcessedEmail, message_id):
         return None
+    if name and not db.session.get(Student, crsid):
+        db.session.add(Student(crsid=crsid, name=name))
     candidates = (
         TimeSlot.query.filter(
             TimeSlot.is_available == False,  # noqa: E712
@@ -93,9 +98,10 @@ def process_mailbox(imap):
         status, parts = imap.fetch(number, "(BODY.PEEK[])")
         if status != "OK" or not parts or not isinstance(parts[0], tuple):
             continue
-        parsed = parse_forward(parts[0][1])
+        raw = parts[0][1]
+        parsed = parse_forward(raw)
         if parsed:
-            outcomes.append(record_work(*parsed))
+            outcomes.append(record_work(*parsed, name=forwarded_sender_name(raw)))
         else:
             _log_processed(message_id, "not student work")
     return [o for o in outcomes if o]

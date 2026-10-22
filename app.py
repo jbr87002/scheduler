@@ -242,6 +242,7 @@ class TimeSlot(db.Model):
 
     # Deleting a slot deletes its work records (the FK also cascades in SQL).
     submissions = db.relationship('WorkSubmission', cascade='all, delete-orphan')
+    notes = db.relationship('WorkNote', cascade='all, delete-orphan')
 
     def to_json(self):
         return {
@@ -277,6 +278,22 @@ class WorkSubmission(db.Model):
             'marked': self.marked,
             'source': self.source,
         }
+
+class Student(db.Model):
+    """Display names for CRSids (bookings only store CRSids)."""
+    crsid = db.Column(db.String(20), primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+
+class WorkNote(db.Model):
+    """Benji's note about one student's work for one supervision."""
+    __table_args__ = (db.UniqueConstraint('slot_id', 'crsid'),)
+    id = db.Column(db.Integer, primary_key=True)
+    slot_id = db.Column(
+        db.Integer, db.ForeignKey('time_slot.id', ondelete='CASCADE'), nullable=False, index=True,
+    )
+    crsid = db.Column(db.String(20), nullable=False)
+    text = db.Column(db.Text, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False)
 
 class ProcessedEmail(db.Model):
     """Emails already handled by sync_work_email.py, so each is counted once
@@ -842,19 +859,25 @@ def list_work():
         .order_by(TimeSlot.start_time)
         .all()
     )
+    slot_ids = [s.id for s in slots]
     received = {
         (sub.slot_id, sub.crsid): sub
-        for sub in WorkSubmission.query.filter(WorkSubmission.slot_id.in_([s.id for s in slots])).all()
+        for sub in WorkSubmission.query.filter(WorkSubmission.slot_id.in_(slot_ids)).all()
     } if slots else {}
+    notes = {
+        (note.slot_id, note.crsid): note.text
+        for note in WorkNote.query.filter(WorkNote.slot_id.in_(slot_ids)).all()
+    } if slots else {}
+    names = {student.crsid: student.name for student in Student.query.all()}
+
+    def student_json(slot, crsid):
+        data = received[(slot.id, crsid)].to_json() if (slot.id, crsid) in received else _not_received(crsid)
+        data['name'] = names.get(crsid)
+        data['note'] = notes.get((slot.id, crsid), '')
+        return data
+
     response = jsonify([
-        {
-            'slot': slot.to_json(),
-            'students': [
-                received[(slot.id, crsid)].to_json() if (slot.id, crsid) in received
-                else _not_received(crsid)
-                for crsid in _group_crsids(slot.name)
-            ],
-        }
+        {'slot': slot.to_json(), 'students': [student_json(slot, c) for c in _group_crsids(slot.name)]}
         for slot in slots
     ])
     response.headers['Cache-Control'] = 'private, no-store'
@@ -922,6 +945,57 @@ def set_work(slot_id, crsid):
         app.logger.exception(f'Could not record work for {crsid} in slot {slot_id}')
         return _error('Could not save the change. Nothing was modified.', 500)
     return jsonify({'success': True, 'student': submission.to_json()})
+
+
+@app.route('/api/admin/work/<int:slot_id>/<crsid>/note', methods=['PUT'])
+@admin_required
+def set_work_note(slot_id, crsid):
+    slot = db.session.get(TimeSlot, slot_id)
+    if not slot or slot.is_available:
+        return _error('This supervision no longer exists. The page has been refreshed.', 404)
+    if crsid not in _group_crsids(slot.name):
+        return _error(f'{crsid} is no longer in this group. The page has been refreshed.', 404)
+    text_value = (request.get_json(silent=True) or {}).get('text')
+    if not isinstance(text_value, str) or len(text_value) > 5000:
+        return _error("Field 'text' must be a string of up to 5000 characters.", 400)
+    note = WorkNote.query.filter_by(slot_id=slot_id, crsid=crsid).first()
+    if not text_value.strip():
+        if note:
+            db.session.delete(note)
+    elif note:
+        note.text = text_value
+        note.updated_at = datetime.now(london_tz).replace(tzinfo=None, microsecond=0)
+    else:
+        db.session.add(WorkNote(
+            slot_id=slot_id, crsid=crsid, text=text_value,
+            updated_at=datetime.now(london_tz).replace(tzinfo=None, microsecond=0),
+        ))
+    error = _commit_or_error(f'Could not save note for {crsid} in slot {slot_id}')
+    if error:
+        return error
+    return jsonify({'success': True, 'note': text_value if text_value.strip() else ''})
+
+
+@app.route('/api/admin/students/<crsid>', methods=['PUT'])
+@admin_required
+def set_student_name(crsid):
+    if not re.fullmatch(r'[a-z]+[0-9]+', crsid):
+        return _error('That is not a CRSid.', 400)
+    name = (request.get_json(silent=True) or {}).get('name')
+    if not isinstance(name, str) or len(name.strip()) > 100 or '<' in name or '>' in name:
+        return _error("Field 'name' must be up to 100 characters.", 400)
+    student = db.session.get(Student, crsid)
+    if not name.strip():
+        if student:
+            db.session.delete(student)
+    elif student:
+        student.name = name.strip()
+    else:
+        db.session.add(Student(crsid=crsid, name=name.strip()))
+    error = _commit_or_error(f'Could not save name for {crsid}')
+    if error:
+        return error
+    return jsonify({'success': True, 'crsid': crsid, 'name': name.strip() or None})
 
 
 @app.route('/admin/logout')
