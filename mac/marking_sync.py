@@ -213,8 +213,10 @@ def send_email(to_address, subject, body, path):
     if DRY_RUN:
         log(f"[dry run] would send {path.name} to {to_address}")
         return
+    # The timeout stops a run hanging if Mail ever stops to ask something
+    # (e.g. "send without a subject?").
     subprocess.run(["osascript", "-", to_address, subject, body, str(path)],
-                   input=SEND_SCRIPT, text=True, check=True, capture_output=True)
+                   input=SEND_SCRIPT, text=True, check=True, capture_output=True, timeout=180)
 
 
 FILE_SENT_SCRIPT = '''
@@ -222,11 +224,23 @@ tell application "Mail"
     set target to mailbox "Sent Items" of account "Cambridge"
     -- Mail only creates this Mac-only folder on the first send.
     if not (exists mailbox "Sent Messages (Cambridge)") then return 0
-    set ms to (messages of mailbox "Sent Messages (Cambridge)" whose subject begins with "Marked supervision work")
+    -- Marked work goes out with no subject (older sends had a subject line).
+    set ms to (messages of mailbox "Sent Messages (Cambridge)" whose subject is "" or subject begins with "Marked supervision work")
+    set moved to 0
     repeat with i from (count of ms) to 1 by -1
-        move (item i of ms) to target
+        set m to item i of ms
+        set isMarkedWork to (subject of m) is not ""
+        if not isMarkedWork then
+            repeat with a in mail attachments of m
+                if (name of a) contains "_marked" then set isMarkedWork to true
+            end repeat
+        end if
+        if isMarkedWork then
+            move m to target
+            set moved to moved + 1
+        end if
     end repeat
-    return count of ms
+    return moved
 end tell
 '''
 
@@ -271,13 +285,16 @@ def send_marked(state, booked, token):
                 log(f"Not sending {rel}: name must start with a booked student's CRSid")
             continue
         folder_info = state["folders"].get(str(Path(rel).parent), {})
-        day = (f"{datetime.fromisoformat(folder_info['start']):%A %-d %B}"
-               if folder_info.get("start") else None)
-        subject = f"Marked supervision work – {day}" if day else "Marked supervision work"
-        body = ("Hi,\n\nPlease find attached your marked work"
-                + (f" for our supervision on {day}" if day else "")
-                + ".\n\nBest wishes,\nBenji")
-        send_email(f"{crsid}@cam.ac.uk", subject, body, path)
+        # Just the marked file: no subject or body text.
+        try:
+            send_email(f"{crsid}@cam.ac.uk", "", "", path)
+        except subprocess.TimeoutExpired:
+            # Mail may still send it once dealt with, so never retry (no duplicates).
+            state["sent"][rel] = {"to": crsid, "at": datetime.now().isoformat(timespec="seconds"),
+                                  "status": "timed out"}
+            save_state(state)
+            log(f"Mail didn't finish sending {rel} to {crsid}; check Mail on this Mac. Not retrying.")
+            continue
         if DRY_RUN:
             continue
         state["sent"][rel] = {"to": crsid, "at": datetime.now().isoformat(timespec="seconds")}

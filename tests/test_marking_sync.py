@@ -74,9 +74,7 @@ def test_marked_file_is_sent_once_to_its_student_and_ticked(env):
     sync.send_marked(state, booked, token="t")
     sync.send_marked(state, booked, token="t")
 
-    assert sent == [("fk420@cam.ac.uk", "Marked supervision work – Saturday 17 October",
-                     "Hi,\n\nPlease find attached your marked work for our supervision on Saturday 17 October."
-                     "\n\nBest wishes,\nBenji", "fk420 – work_marked.pdf")]
+    assert sent == [("fk420@cam.ac.uk", "", "", "fk420 – work_marked.pdf")]
     assert ticked == [(2, "fk420")]
 
 
